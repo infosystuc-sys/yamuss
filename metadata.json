@@ -1,0 +1,5 @@
+{
+  "name": "Finance Portal - OP Management",
+  "description": "A comprehensive financial management dashboard for processing payment orders, validating tax retentions, and managing bank export batches with Tango ERP integration.",
+  "requestFramePermissions": []
+}

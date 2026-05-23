@@ -1,0 +1,245 @@
+
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { getStatusStyle } from '../constants';
+import { PaymentOrder } from '../types';
+import { fetchOrders, fetchOrderComprobante } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+
+
+export const DashboardScreen = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const canReview = user?.role !== 'ADMINISTRATIVO';
+  const [orders, setOrders] = useState<PaymentOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [loadingPdf, setLoadingPdf] = useState<string | null>(null);
+
+  const handleViewComprobante = async (opId: string) => {
+    if (loadingPdf) return;
+    setLoadingPdf(opId);
+    try {
+      const pdfBase64 = await fetchOrderComprobante(opId);
+      const byteChars = atob(pdfBase64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err: any) {
+      alert(`Error al generar comprobante: ${err.message}`);
+    } finally {
+      setLoadingPdf(null);
+    }
+  };
+
+  useEffect(() => {
+    const loadOrders = async () => {
+      try {
+        const data = await fetchOrders(statusFilter);
+        setOrders(data);
+      } catch (err: any) {
+        setError(`Error al cargar las órdenes de pago: ${err.message || 'Desconocido'}`);
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadOrders();
+  }, [statusFilter]);
+
+  const [showFilters, setShowFilters] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredOrders = orders.filter(op =>
+    op.provider.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    op.number.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const stats = {
+    pending: orders.filter(o => o.status === 'Pendiente' || (o.status as string)?.toUpperCase?.() === 'PENDIENTE').length,
+    revised: orders.filter(o => (o.status as string)?.toUpperCase?.() === 'REVISADA').length,
+    transferred: orders.filter(o => (o.status as string)?.toUpperCase?.() === 'TRANSFERIDA').length,
+    totalAmount: orders.reduce((sum, o) => sum + o.netAmount, 0)
+  };
+
+  const today = new Date().toLocaleDateString('es-AR', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  });
+
+  if (loading) {
+    return (
+      <div className="flex bg-background-light dark:bg-background-dark justify-center items-center min-h-[300px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <span className="ml-3 text-ink-soft font-bold">Cargando pagos...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 bg-red-50 text-red-700 rounded-lg border border-red-200">
+        <p className="font-bold">Error de Conexión</p>
+        <p>{error}</p>
+      </div>
+    );
+  }
+
+  const statCards = [
+    { key: 'pending',     label: 'Pendientes',  value: stats.pending,     caption: 'por revisar',     accent: 'bg-amber-500',   valueColor: 'text-amber-600' },
+    { key: 'revised',     label: 'Revisadas',   value: stats.revised,     caption: 'para transferir', accent: 'bg-sky-500',     valueColor: 'text-sky-600' },
+    { key: 'transferred', label: 'Transferidas',value: stats.transferred, caption: 'completadas',     accent: 'bg-emerald-500', valueColor: 'text-emerald-600' },
+    { key: 'total',       label: 'Monto Total', value: `$ ${(stats.totalAmount / 1_000_000).toFixed(1).replace('.', ',')}M`, caption: 'en listado', accent: 'bg-ink-muted', valueColor: 'text-ink' },
+  ];
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-8 animate-fade-in">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-4xl font-semibold tracking-tight text-ink dark:text-white">Panel de control</h1>
+          <p className="text-ink-soft dark:text-slate-400 mt-1 text-sm">
+            {user?.database ?? '—'} <span className="mx-1">—</span> {today}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-10 px-3 rounded-lg border border-border-light text-xs font-bold bg-surface-light dark:bg-surface-dark text-ink dark:text-white focus:outline-none focus:border-primary cursor-pointer"
+          >
+            <option value="ALL">TODOS</option>
+            <option value="PENDING">PENDIENTES</option>
+            <option value="REVISED">REVISADAS</option>
+            <option value="PROCESSED">TRANSFERIDAS</option>
+          </select>
+
+          <div className="relative">
+            {showFilters && (
+              <input
+                type="text"
+                placeholder="Buscar proveedor o nro..."
+                className="absolute right-0 bottom-12 w-64 p-2 bg-surface-light border border-border-light rounded shadow-lg text-xs"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                autoFocus
+              />
+            )}
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`h-10 px-4 rounded-lg border text-xs font-bold flex items-center gap-2 transition-colors shadow-sm ${showFilters ? 'bg-primary/10 border-primary text-primary' : 'bg-surface-light dark:bg-surface-dark border-border-light dark:border-border-dark text-ink-soft'}`}
+            >
+              <span className="material-symbols-outlined text-[18px]">{showFilters ? 'close' : 'filter_alt'}</span>
+              {showFilters ? 'Cerrar Filtros' : 'Filtros Avanzados'}
+            </button>
+          </div>
+
+
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+        {statCards.map((s) => (
+          <div
+            key={s.key}
+            className="relative bg-surface-light dark:bg-surface-dark rounded-2xl border border-border-light dark:border-border-dark shadow-sm overflow-hidden"
+          >
+            <div className={`absolute top-0 left-0 h-1 w-full ${s.accent}`} />
+            <div className="px-6 pt-6 pb-5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-ink-soft dark:text-slate-400">
+                {s.label}
+              </p>
+              <p className={`mt-3 font-serif text-4xl font-semibold leading-none ${s.valueColor}`}>
+                {s.value}
+              </p>
+              <p className="mt-3 text-xs text-ink-muted dark:text-slate-500">{s.caption}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6">
+        <div className="bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-2xl overflow-hidden shadow-sm flex flex-col">
+          <div className="px-6 py-5 border-b border-border-light dark:border-border-dark flex items-center justify-between">
+            <h3 className="font-serif text-xl font-semibold text-ink dark:text-white">Órdenes de pago</h3>
+            <button className="text-primary text-xs font-bold hover:underline">Ver todo →</button>
+          </div>
+          <div className="overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-background-light dark:bg-slate-800/50 text-[10px] uppercase font-bold text-ink-muted tracking-[0.15em] border-b border-border-light">
+                  <th className="py-4 px-6">N° OP</th>
+                  <th className="py-4 px-6">Proveedor</th>
+                  <th className="py-4 px-6">Fecha</th>
+                  <th className="py-4 px-6 text-right">Monto Neto</th>
+                  <th className="py-4 px-6">Estado</th>
+                  <th className="py-4 px-6"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-light/60 dark:divide-slate-800">
+                {filteredOrders.map((op) => {
+                  const st = getStatusStyle(op.status as any);
+                  return (
+                    <tr key={op.id} className="hover:bg-background-light/70 dark:hover:bg-slate-800/30 transition-colors group">
+                      <td className="py-4 px-6 text-sm font-mono font-semibold text-ink-soft dark:text-slate-400">{op.number}</td>
+                      <td className="py-4 px-6">
+                        <p className="text-sm font-semibold text-ink dark:text-white line-clamp-1">{op.provider}</p>
+                        {op.cbu && <p className="text-[11px] text-ink-muted font-mono">CBU: {op.cbu}</p>}
+                        {op.email && <p className="text-[11px] text-ink-muted">✉ {op.email}</p>}
+                      </td>
+                      <td className="py-4 px-6 text-xs text-ink-soft">{op.date}</td>
+                      <td className="py-4 px-6 text-right text-sm font-semibold font-mono text-ink dark:text-white">
+                        $ {op.netAmount.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-4 px-6">
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium"
+                          style={{ backgroundColor: st.bg, borderColor: st.border, color: st.main }}
+                        >
+                          <span
+                            className="inline-block size-1.5 rounded-full"
+                            style={{ backgroundColor: st.main }}
+                          />
+                          {st.label}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleViewComprobante(op.id)}
+                            disabled={loadingPdf === op.id}
+                            title="Ver comprobante PDF"
+                            className="inline-flex items-center gap-1 border border-border-light text-ink-soft hover:border-ink-soft hover:text-ink text-xs font-semibold px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+                          >
+                            {loadingPdf === op.id
+                              ? <span className="material-symbols-outlined text-[15px] animate-spin">progress_activity</span>
+                              : <span className="material-symbols-outlined text-[15px]">picture_as_pdf</span>
+                            }
+                            <span className="hidden sm:inline">Ver PDF</span>
+                          </button>
+                          {canReview ? (
+                            <button
+                              onClick={() => navigate(`/review/${op.id}`)}
+                              className="border border-primary/40 text-primary hover:bg-primary hover:text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-all"
+                            >
+                              Revisar
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-ink-muted font-medium">Solo lectura</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
