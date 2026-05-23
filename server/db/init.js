@@ -143,9 +143,43 @@ export async function initializeDatabase(adapter) {
         }
         console.log('Tabla PADRON_TEM verificada.');
 
-        // 3. Tabla APP_USUARIOS (y APP_LOTES)
+        // 3. Tablas ROLES, USUARIOS y APP_USUARIOS (legacy)
         if (isSqlite) {
-            // SQLite: recrear si columna Usuario no existe (migración)
+            // --- ROLES ---
+            const rolesRes = await adapter.query("SELECT name FROM sqlite_master WHERE type='table' AND name='ROLES'");
+            if (rolesRes.recordset.length === 0) {
+                await adapter.query(`
+                    CREATE TABLE ROLES (
+                        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Nombre TEXT NOT NULL UNIQUE,
+                        Descripcion TEXT
+                    );
+                `);
+                await adapter.query(`INSERT INTO ROLES (Nombre, Descripcion) VALUES ('ADMINISTRADOR', 'Acceso completo a toda la aplicación')`);
+                await adapter.query(`INSERT INTO ROLES (Nombre, Descripcion) VALUES ('OPERADOR', 'Dashboard, ver PDF, importar padrón')`);
+            }
+
+            // --- USUARIOS ---
+            const usuRes = await adapter.query("SELECT name FROM sqlite_master WHERE type='table' AND name='USUARIOS'");
+            if (usuRes.recordset.length === 0) {
+                await adapter.query(`
+                    CREATE TABLE USUARIOS (
+                        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Usuario TEXT NOT NULL UNIQUE,
+                        Password TEXT NOT NULL DEFAULT '1234',
+                        RolId INTEGER NOT NULL,
+                        PrimerLogin INTEGER NOT NULL DEFAULT 1,
+                        Activo INTEGER NOT NULL DEFAULT 1,
+                        FechaCreacion TEXT DEFAULT (datetime('now','localtime'))
+                    );
+                `);
+                await adapter.query(`
+                    INSERT INTO USUARIOS (Usuario, Password, RolId, PrimerLogin, Activo)
+                    SELECT 'ADMIN', 'admin', ID, 0, 1 FROM ROLES WHERE Nombre = 'ADMINISTRADOR'
+                `);
+            }
+
+            // --- APP_USUARIOS legacy (recrear si columna Usuario no existe) ---
             const res = await adapter.query("SELECT name FROM sqlite_master WHERE type='table' AND name='APP_USUARIOS'");
             if (res.recordset.length > 0) {
                 const cols = await adapter.query("PRAGMA table_info(APP_USUARIOS)");
@@ -200,7 +234,43 @@ export async function initializeDatabase(adapter) {
             }
 
         } else {
-            // SQL Server: crear tabla si no existe (no destruir datos)
+            // --- ROLES (SQL Server) ---
+            const rolesRes = await adapter.query("SELECT * FROM sys.tables WHERE name = 'ROLES'");
+            if (rolesRes.recordset.length === 0) {
+                await adapter.query(`
+                    CREATE TABLE ROLES (
+                        ID INT IDENTITY(1,1) PRIMARY KEY,
+                        Nombre VARCHAR(30) NOT NULL,
+                        Descripcion VARCHAR(100)
+                    );
+                    INSERT INTO ROLES (Nombre, Descripcion) VALUES ('ADMINISTRADOR', 'Acceso completo a toda la aplicación');
+                    INSERT INTO ROLES (Nombre, Descripcion) VALUES ('OPERADOR', 'Dashboard, ver PDF, importar padrón');
+                `);
+                console.log('Tabla ROLES creada en SQL Server.');
+            }
+
+            // --- USUARIOS (SQL Server) ---
+            const usuRes = await adapter.query("SELECT * FROM sys.tables WHERE name = 'USUARIOS'");
+            if (usuRes.recordset.length === 0) {
+                await adapter.query(`
+                    CREATE TABLE USUARIOS (
+                        ID INT IDENTITY(1,1) PRIMARY KEY,
+                        Usuario VARCHAR(50) NOT NULL UNIQUE,
+                        Password VARCHAR(255) NOT NULL DEFAULT '1234',
+                        RolId INT NOT NULL,
+                        PrimerLogin BIT NOT NULL DEFAULT 1,
+                        Activo BIT NOT NULL DEFAULT 1,
+                        FechaCreacion DATETIME DEFAULT GETDATE()
+                    );
+                `);
+                await adapter.query(`
+                    INSERT INTO USUARIOS (Usuario, Password, RolId, PrimerLogin, Activo)
+                    SELECT 'ADMIN', 'admin', ID, 0, 1 FROM ROLES WHERE Nombre = 'ADMINISTRADOR'
+                `);
+                console.log('Tabla USUARIOS creada en SQL Server con usuario ADMIN.');
+            }
+
+            // --- APP_USUARIOS legacy (SQL Server) ---
             const res = await adapter.query("SELECT * FROM sys.tables WHERE name = 'APP_USUARIOS'");
             if (res.recordset.length === 0) {
                 await adapter.query(`
@@ -250,10 +320,27 @@ export async function initializeDatabase(adapter) {
         }
         console.log('Tabla APP_USUARIOS verificada.');
 
-        // Seed de usuarios por defecto (si la tabla está vacía)
+        // Verificar seed de USUARIOS (tabla nueva)
+        const checkNewUsers = await adapter.query("SELECT COUNT(*) as count FROM USUARIOS");
+        const newCount = checkNewUsers.recordset[0].count;
+        if (newCount === 0) {
+            if (isSqlite) {
+                await adapter.query(`
+                    INSERT INTO USUARIOS (Usuario, Password, RolId, PrimerLogin, Activo)
+                    SELECT 'ADMIN', 'admin', ID, 0, 1 FROM ROLES WHERE Nombre = 'ADMINISTRADOR'
+                `);
+            } else {
+                await adapter.query(`
+                    INSERT INTO USUARIOS (Usuario, Password, RolId, PrimerLogin, Activo)
+                    SELECT 'ADMIN', 'admin', ID, 0, 1 FROM ROLES WHERE Nombre = 'ADMINISTRADOR'
+                `);
+            }
+            console.log('Usuario seed ADMIN insertado en USUARIOS.');
+        }
+
+        // Seed de APP_USUARIOS legacy (si está vacía)
         const checkUsers = await adapter.query("SELECT COUNT(*) as count FROM APP_USUARIOS");
         const count = checkUsers.recordset[0].count;
-
         if (count === 0) {
             const seedUsers = [
                 { Usuario: 'SUPERVISOR', Password: 'admin', Rol: 'SUPERVISOR' },
@@ -271,7 +358,6 @@ export async function initializeDatabase(adapter) {
                     `);
                 }
             }
-            console.log('Usuarios seed insertados: SUPERVISOR, ADMINISTRATIVO, REVISION, TRANSFERENCIA.');
         }
 
         // =========================================================================

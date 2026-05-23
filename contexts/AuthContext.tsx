@@ -6,6 +6,7 @@ interface AuthUser {
     role: string;
     database: string;
     token: string;
+    primerLogin?: boolean;
 }
 
 interface AuthContextType {

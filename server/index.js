@@ -93,21 +93,24 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ error: 'Usuario, contraseña y empresa son requeridos.' });
     }
 
-    // Validar empresa permitida
     const VALID_DATABASES = ['CIMSA', 'CENTRAL', 'GALENO', 'GALENORT', 'MITRE', 'AST', 'PRUEBA'];
     if (!VALID_DATABASES.includes(database)) {
         return res.status(400).json({ error: 'Empresa no válida.' });
     }
 
     try {
-        // Autenticación SIEMPRE contra la BD maestra (CENTRAL)
-        // La empresa seleccionada se incluye en el JWT pero no se usa para buscar usuarios.
         const masterDb = process.env.DB_DATABASE || 'CENTRAL';
         const db = await createSession(masterDb);
 
+        // Autenticar contra la nueva tabla USUARIOS (con JOIN a ROLES)
         const result = await db.request()
             .input('usuario', 'VarChar', username.toUpperCase())
-            .query("SELECT Usuario, Password, Rol FROM APP_USUARIOS WHERE Usuario = @usuario");
+            .query(`
+                SELECT u.ID, u.Usuario, u.Password, u.PrimerLogin, u.Activo, r.Nombre as Rol
+                FROM USUARIOS u
+                JOIN ROLES r ON u.RolId = r.ID
+                WHERE u.Usuario = @usuario
+            `);
 
         if (result.recordset.length === 0) {
             return res.status(401).json({ error: 'Usuario no encontrado.' });
@@ -115,23 +118,28 @@ app.post('/api/login', async (req, res) => {
 
         const user = result.recordset[0];
 
+        if (!user.Activo) {
+            return res.status(401).json({ error: 'Usuario inactivo. Contacte al administrador.' });
+        }
+
         if (user.Password !== password && user.Password !== password.toString()) {
             return res.status(401).json({ error: 'Contraseña incorrecta.' });
         }
 
-        // JWT lleva la empresa SELECCIONADA (no la maestra)
+        const primerLogin = user.PrimerLogin === 1 || user.PrimerLogin === true;
+
         const token = generateToken({
             username: user.Usuario,
             role: user.Rol,
-            database: database   // la empresa del dropdown, ej. 'CIMSA'
+            database: database
         });
 
-        console.log(`✅ Login: ${user.Usuario} | Rol: ${user.Rol} | Auth en: ${masterDb} | Empresa activa: ${database}`);
+        console.log(`✅ Login: ${user.Usuario} | Rol: ${user.Rol} | Empresa: ${database} | PrimerLogin: ${primerLogin}`);
 
         return res.json({
             success: true,
             token,
-            user: { username: user.Usuario, role: user.Rol, database: database }
+            user: { username: user.Usuario, role: user.Rol, database, primerLogin }
         });
 
     } catch (e) {
@@ -147,7 +155,7 @@ app.post('/api/login', async (req, res) => {
 // Aplicar authenticate a TODAS las rutas de API siguientes
 app.use('/api', authenticate);
 
-// Cambiar contraseña (siempre en la BD maestra donde vive APP_USUARIOS)
+// Cambiar contraseña (tabla USUARIOS en BD maestra)
 app.post('/api/auth/change-password', async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     const { username } = req.user;
@@ -155,8 +163,8 @@ app.post('/api/auth/change-password', async (req, res) => {
     if (!currentPassword || !newPassword) {
         return res.status(400).json({ error: 'Contraseña actual y nueva son requeridas.' });
     }
-    if (newPassword.length < 3) {
-        return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 3 caracteres.' });
+    if (newPassword.length < 4) {
+        return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 4 caracteres.' });
     }
 
     try {
@@ -165,7 +173,7 @@ app.post('/api/auth/change-password', async (req, res) => {
 
         const result = await db.request()
             .input('usuario', 'VarChar', username)
-            .query("SELECT Password FROM APP_USUARIOS WHERE Usuario = @usuario");
+            .query("SELECT Password FROM USUARIOS WHERE Usuario = @usuario");
 
         if (result.recordset.length === 0) {
             return res.status(404).json({ error: 'Usuario no encontrado.' });
@@ -178,9 +186,9 @@ app.post('/api/auth/change-password', async (req, res) => {
         await db.request()
             .input('newPass', 'VarChar', newPassword)
             .input('usuario', 'VarChar', username)
-            .query("UPDATE APP_USUARIOS SET Password = @newPass WHERE Usuario = @usuario");
+            .query("UPDATE USUARIOS SET Password = @newPass, PrimerLogin = 0 WHERE Usuario = @usuario");
 
-        console.log(`🔑 Contraseña cambiada para: ${username} en BD maestra ${masterDb}`);
+        console.log(`🔑 Contraseña cambiada para: ${username}`);
         res.json({ success: true, message: 'Contraseña actualizada correctamente.' });
 
     } catch (e) {
@@ -265,13 +273,127 @@ app.get('/api/padron/consulta', async (req, res) => {
     }
 });
 
-// Importar Padrón Rentas (requiere autenticación, solo SUPERVISOR)
-app.post('/api/padron/import', authenticate, requireRole('SUPERVISOR'), upload.single('file'), (req, res) => {
+// ---- GESTIÓN DE USUARIOS Y ROLES (solo ADMINISTRADOR) ----
+
+// Listar roles
+app.get('/api/roles', requireRole('ADMINISTRADOR'), async (req, res) => {
+    try {
+        const db = await getMasterDb();
+        const result = await db.query("SELECT ID, Nombre, Descripcion FROM ROLES ORDER BY Nombre");
+        res.json(result.recordset);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Listar usuarios
+app.get('/api/users', requireRole('ADMINISTRADOR'), async (req, res) => {
+    try {
+        const db = await getMasterDb();
+        const result = await db.query(`
+            SELECT u.ID, u.Usuario, u.Activo, u.PrimerLogin, u.FechaCreacion, r.Nombre as Rol, r.ID as RolId
+            FROM USUARIOS u
+            JOIN ROLES r ON u.RolId = r.ID
+            ORDER BY u.Usuario
+        `);
+        res.json(result.recordset);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Crear usuario (password por defecto: 1234, PrimerLogin: 1)
+app.post('/api/users', requireRole('ADMINISTRADOR'), async (req, res) => {
+    const { usuario, rolId } = req.body;
+    if (!usuario || !rolId) {
+        return res.status(400).json({ error: 'Usuario y rol son requeridos.' });
+    }
+    const cleanUsuario = String(usuario).trim().toUpperCase();
+    if (cleanUsuario.length < 3) {
+        return res.status(400).json({ error: 'El nombre de usuario debe tener al menos 3 caracteres.' });
+    }
+    try {
+        const db = await getMasterDb();
+        const check = await db.request()
+            .input('usu', 'VarChar', cleanUsuario)
+            .query("SELECT ID FROM USUARIOS WHERE Usuario = @usu");
+        if (check.recordset.length > 0) {
+            return res.status(409).json({ error: `El usuario '${cleanUsuario}' ya existe.` });
+        }
+        await db.request()
+            .input('usu', 'VarChar', cleanUsuario)
+            .input('rolId', 'Int', parseInt(rolId, 10))
+            .query(`
+                INSERT INTO USUARIOS (Usuario, Password, RolId, PrimerLogin, Activo)
+                VALUES (@usu, '1234', @rolId, 1, 1)
+            `);
+        console.log(`👤 Usuario creado: ${cleanUsuario} | RolId: ${rolId}`);
+        res.json({ success: true, message: `Usuario '${cleanUsuario}' creado con contraseña por defecto 1234.` });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Actualizar usuario (rol y/o estado activo)
+app.put('/api/users/:id', requireRole('ADMINISTRADOR'), async (req, res) => {
+    const { id } = req.params;
+    const { rolId, activo } = req.body;
+    const userId = parseInt(id, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+    try {
+        const db = await getMasterDb();
+        const sets = [];
+        if (rolId !== undefined) sets.push(`RolId = ${parseInt(rolId, 10)}`);
+        if (activo !== undefined) sets.push(`Activo = ${activo ? 1 : 0}`);
+        if (sets.length === 0) return res.status(400).json({ error: 'Nada que actualizar.' });
+        await db.query(`UPDATE USUARIOS SET ${sets.join(', ')} WHERE ID = ${userId}`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Resetear contraseña a '1234' y activar primer login
+app.post('/api/users/:id/reset-password', requireRole('ADMINISTRADOR'), async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+    try {
+        const db = await getMasterDb();
+        await db.query(`UPDATE USUARIOS SET Password = '1234', PrimerLogin = 1 WHERE ID = ${userId}`);
+        res.json({ success: true, message: 'Contraseña restablecida a 1234.' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Eliminar usuario
+app.delete('/api/users/:id', requireRole('ADMINISTRADOR'), async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: 'ID inválido.' });
+    try {
+        const db = await getMasterDb();
+        // No permitir eliminar el propio usuario
+        const selfCheck = await db.request()
+            .input('id', 'Int', userId)
+            .input('usu', 'VarChar', req.user.username)
+            .query("SELECT ID FROM USUARIOS WHERE ID = @id AND Usuario = @usu");
+        if (selfCheck.recordset.length > 0) {
+            return res.status(400).json({ error: 'No puede eliminar su propio usuario.' });
+        }
+        await db.query(`DELETE FROM USUARIOS WHERE ID = ${userId}`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Importar Padrón Rentas (ADMINISTRADOR u OPERADOR)
+app.post('/api/padron/import', authenticate, requireRole('ADMINISTRADOR', 'OPERADOR'), upload.single('file'), (req, res) => {
     importarPadron(req, res, adapter);
 });
 
-// Importar Padrón TEM (requiere autenticación, solo SUPERVISOR)
-app.post('/api/padron-tem/import', authenticate, requireRole('SUPERVISOR'), upload.single('file'), (req, res) => {
+// Importar Padrón TEM (ADMINISTRADOR u OPERADOR)
+app.post('/api/padron-tem/import', authenticate, requireRole('ADMINISTRADOR', 'OPERADOR'), upload.single('file'), (req, res) => {
     importarPadronTEM(req, res, adapter);
 });
 
@@ -664,7 +786,7 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
 
 // Confirmar Revisión — genera PDF comprobante (sin enviar email)
 app.post('/api/orders/:id/review',
-    requireRole('SUPERVISOR', 'REVISION', 'TRANSFERENCIA'),
+    requireRole('ADMINISTRADOR'),
     async (req, res) => {
         try {
             const id = req.params.id.trim();
@@ -1024,10 +1146,10 @@ app.get('/api/orders/:id/comprobante',
     }
 );
 
-// ---- TESORERÍA (solo SUPERVISOR y TRANSFERENCIA) ----
+// ---- TESORERÍA (solo ADMINISTRADOR) ----
 
 app.post('/api/treasury/process',
-    requireRole('SUPERVISOR', 'TRANSFERENCIA'),
+    requireRole('ADMINISTRADOR'),
     async (req, res) => {
         try {
             const { opIds, accountId, fileName: customFileName } = req.body;
@@ -1263,7 +1385,7 @@ app.get('/api/batches/:id', async (req, res) => {
 // ---- ENVÍO DE EMAILS POR LOTE ----
 
 app.post('/api/batches/:id/send-emails',
-    requireRole('SUPERVISOR', 'TRANSFERENCIA'),
+    requireRole('ADMINISTRADOR'),
     async (req, res) => {
         try {
             const loteId = parseInt(req.params.id, 10);
@@ -1449,7 +1571,8 @@ async function startServer() {
         app.listen(PORT, () => {
             console.log(`\n✅ Servidor listo en puerto ${PORT}.`);
             console.log(`   API disponible en: http://localhost:${PORT}`);
-            console.log(`   Usuarios disponibles: SUPERVISOR/admin, ADMINISTRATIVO/1234, REVISION/1234, TRANSFERENCIA/1234`);
+            console.log(`   Usuario por defecto: ADMIN / admin (Administrador)`);
+            console.log(`   Gestión de usuarios disponible desde la aplicación.`);
 
             // Autoabrir el navegador en Windows si estamos corriendo como ejecutable
             if (process.platform === 'win32') {

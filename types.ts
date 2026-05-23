@@ -1,3 +1,18 @@
+export interface Role {
+  ID: number;
+  Nombre: string;
+  Descripcion: string;
+}
+
+export interface AppUser {
+  ID: number;
+  Usuario: string;
+  Rol: string;
+  RolId: number;
+  Activo: boolean;
+  PrimerLogin: boolean;
+  FechaCreacion: string;
+}
 
 export enum OPStatus {
   PENDIENTE = 'PENDIENTE',

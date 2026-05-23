@@ -1,4 +1,4 @@
-import { PaymentOrder } from '../types';
+import { PaymentOrder, AppUser, Role } from '../types';
 
 export const API_URL = `${window.location.origin}/api`;
 
@@ -176,4 +176,59 @@ export async function sendBatchEmails(batchId: number, opNumbers?: string[]): Pr
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Error al enviar comprobantes del lote');
     return data;
+}
+
+// ---- GESTIÓN DE USUARIOS ----
+
+export async function fetchRoles(): Promise<Role[]> {
+    const response = await fetch(`${API_URL}/roles`, { headers: getAuthHeaders() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al obtener roles');
+    return data;
+}
+
+export async function fetchUsers(): Promise<AppUser[]> {
+    const response = await fetch(`${API_URL}/users`, { headers: getAuthHeaders() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al obtener usuarios');
+    return data;
+}
+
+export async function createUser(usuario: string, rolId: number): Promise<{ success: boolean; message: string }> {
+    const response = await fetch(`${API_URL}/users`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ usuario, rolId }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al crear usuario');
+    return data;
+}
+
+export async function updateUser(id: number, changes: { rolId?: number; activo?: boolean }): Promise<void> {
+    const response = await fetch(`${API_URL}/users/${id}`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(changes),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al actualizar usuario');
+}
+
+export async function resetUserPassword(id: number): Promise<void> {
+    const response = await fetch(`${API_URL}/users/${id}/reset-password`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al resetear contraseña');
+}
+
+export async function deleteUser(id: number): Promise<void> {
+    const response = await fetch(`${API_URL}/users/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al eliminar usuario');
 }

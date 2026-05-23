@@ -10,18 +10,20 @@ import { ProcessingScreen } from './screens/ProcessingScreen';
 import { BatchHistoryScreen } from './screens/BatchHistoryScreen';
 import { ImportScreen } from './screens/ImportScreen';
 import { SuccessScreen } from './screens/SuccessScreen';
+import { UsersScreen } from './screens/UsersScreen';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { switchCompany } from './services/api';
 
 // ---- ROLE CONSTANTS ----
-const ALL_ROLES = ['SUPERVISOR', 'ADMINISTRATIVO', 'REVISION', 'TRANSFERENCIA'];
+const ALL_ROLES = ['ADMINISTRADOR', 'OPERADOR'];
+const ADMIN_ONLY = ['ADMINISTRADOR'];
 
 const Sidebar = () => {
   const location = useLocation();
   const { user } = useAuth();
   const isActive = (path: string) => location.pathname === path;
 
-  const canProcessBatch = user?.role === 'SUPERVISOR' || user?.role === 'TRANSFERENCIA';
+  const isAdmin = user?.role === 'ADMINISTRADOR';
 
   const NavLink = ({ to, icon, label }: { to: string; icon: string; label: string }) => (
     <Link
@@ -49,13 +51,23 @@ const Sidebar = () => {
         <div>
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Operaciones</h3>
           <nav className="flex flex-col space-y-1">
-            {canProcessBatch && (
+            {isAdmin && (
               <NavLink to="/processing" icon="layers" label="Procesar Lote" />
             )}
-            <NavLink to="/batches" icon="history" label="Consultar Lotes" />
+            {isAdmin && (
+              <NavLink to="/batches" icon="history" label="Consultar Lotes" />
+            )}
             <NavLink to="/import" icon="cloud_upload" label="Importar Padrón" />
           </nav>
         </div>
+        {isAdmin && (
+          <div>
+            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Administración</h3>
+            <nav className="flex flex-col space-y-1">
+              <NavLink to="/users" icon="manage_accounts" label="Gestión de Usuarios" />
+            </nav>
+          </div>
+        )}
       </div>
       <div className="p-4 border-t border-border-light dark:border-border-dark">
         {user && (
@@ -63,7 +75,13 @@ const Sidebar = () => {
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Conectado como</p>
             <p className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">{user.username}</p>
             <div className="flex items-center gap-2 mt-1">
-              <span className="inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-primary/10 text-primary">{user.role}</span>
+              <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold uppercase
+                ${user.role === 'ADMINISTRADOR'
+                  ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
+                  : 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400'
+                }`}>
+                {user.role}
+              </span>
               <span className="text-[10px] text-slate-400">{user.database}</span>
             </div>
           </div>
@@ -83,7 +101,6 @@ const Header = () => {
 
   const VALID_DATABASES = ['CIMSA', 'CENTRAL', 'GALENO', 'GALENORT', 'MITRE', 'AST', 'PRUEBA'];
 
-  // Cerrar el dropdown al hacer click fuera de él
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
@@ -209,39 +226,76 @@ const DashboardLayout = ({ children }: { children?: React.ReactNode }) => (
   </div>
 );
 
+// Wrapper interno para manejar el primer login forzado
+const AppRoutes: React.FC = () => {
+  const { user, login } = useAuth();
+  const [showForcedChange, setShowForcedChange] = useState(false);
+
+  useEffect(() => {
+    if (user?.primerLogin) {
+      setShowForcedChange(true);
+    }
+  }, [user?.primerLogin]);
+
+  const handlePasswordChanged = () => {
+    if (user) {
+      login({ ...user, primerLogin: false });
+    }
+    setShowForcedChange(false);
+  };
+
+  return (
+    <>
+      {showForcedChange && (
+        <ChangePasswordModal
+          forced
+          onClose={() => {}}
+          onPasswordChanged={handlePasswordChanged}
+        />
+      )}
+      <Routes>
+        <Route path="/" element={<LoginScreen />} />
+        <Route path="/dashboard" element={
+          <ProtectedRoute roles={ALL_ROLES}>
+            <DashboardLayout><DashboardScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/review/:id" element={
+          <ProtectedRoute roles={ALL_ROLES}>
+            <DashboardLayout><OrderDetailScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/processing" element={
+          <ProtectedRoute roles={ADMIN_ONLY}>
+            <DashboardLayout><ProcessingScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/batches" element={
+          <ProtectedRoute roles={ADMIN_ONLY}>
+            <DashboardLayout><BatchHistoryScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/import" element={
+          <ProtectedRoute roles={ALL_ROLES}>
+            <DashboardLayout><ImportScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/users" element={
+          <ProtectedRoute roles={ADMIN_ONLY}>
+            <DashboardLayout><UsersScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/success" element={<SuccessScreen />} />
+      </Routes>
+    </>
+  );
+};
+
 const App: React.FC = () => {
   return (
     <HashRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/" element={<LoginScreen />} />
-          <Route path="/dashboard" element={
-            <ProtectedRoute roles={ALL_ROLES}>
-              <DashboardLayout><DashboardScreen /></DashboardLayout>
-            </ProtectedRoute>
-          } />
-          <Route path="/review/:id" element={
-            <ProtectedRoute roles={ALL_ROLES}>
-              <DashboardLayout><OrderDetailScreen /></DashboardLayout>
-            </ProtectedRoute>
-          } />
-          <Route path="/processing" element={
-            <ProtectedRoute roles={['SUPERVISOR', 'TRANSFERENCIA']}>
-              <DashboardLayout><ProcessingScreen /></DashboardLayout>
-            </ProtectedRoute>
-          } />
-          <Route path="/batches" element={
-            <ProtectedRoute roles={ALL_ROLES}>
-              <DashboardLayout><BatchHistoryScreen /></DashboardLayout>
-            </ProtectedRoute>
-          } />
-          <Route path="/import" element={
-            <ProtectedRoute roles={ALL_ROLES}>
-              <DashboardLayout><ImportScreen /></DashboardLayout>
-            </ProtectedRoute>
-          } />
-          <Route path="/success" element={<SuccessScreen />} />
-        </Routes>
+        <AppRoutes />
       </AuthProvider>
     </HashRouter>
   );

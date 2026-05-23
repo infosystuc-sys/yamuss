@@ -9,7 +9,7 @@ export const OrderDetailScreen = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const { user } = useAuth();
-    const canReview = user?.role !== 'ADMINISTRATIVO';
+    const canReview = user?.role === 'ADMINISTRADOR';
     const [order, setOrder] = useState<PaymentOrder | null>(null);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [retentionData, setRetentionData] = useState<RetentionResponse | null>(null);
