@@ -54,7 +54,7 @@ export const LoginScreen = () => {
           <div className="mx-auto size-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 text-primary">
             <span className="material-symbols-outlined text-4xl">account_balance_wallet</span>
           </div>
-          <h1 className="text-2xl font-black text-slate-900">Finance Portal</h1>
+          <h1 className="text-2xl font-black text-slate-900">Gestión de Pagos</h1>
           <p className="text-slate-500 mt-1">Gestión de Tesorería · Sistema Multi-Empresa</p>
         </div>
 
@@ -119,7 +119,7 @@ export const LoginScreen = () => {
         </form>
 
         <div className="bg-slate-50 p-4 text-center text-xs text-slate-400 border-t border-slate-100">
-          <div className="font-medium mb-1">Finance Portal · Tango ERP Multi-Empresa</div>
+          <div className="font-medium mb-1">Gestión de Pagos · Tango ERP Multi-Empresa</div>
           <div className="text-slate-300">CIMSA · CENTRAL · GALENO · GALENORT · MITRE · AST · PRUEBA</div>
         </div>
       </div>

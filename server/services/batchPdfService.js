@@ -103,7 +103,7 @@ export async function generateLotePDF(data) {
     </div>
   </div>
   <div class="doc-footer">
-    Generado automáticamente por Finance Portal | Documento de respaldo de lote
+    Generado automáticamente por Gestión de Pagos | Documento de respaldo de lote
   </div>
 </body>
 </html>`;

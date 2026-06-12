@@ -98,6 +98,7 @@ export interface BatchDetailItem {
     number: string;
     amount: number;
     providerName: string;
+    emailEnviado?: boolean;
 }
 
 export async function fetchBatches(): Promise<Batch[]> {
@@ -231,4 +232,38 @@ export async function deleteUser(id: number): Promise<void> {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Error al eliminar usuario');
+}
+
+// ---- PARÁMETROS INICIALES ----
+
+export interface AppSettings {
+    [key: string]: { valor: string; descripcion: string };
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+    const response = await fetch(`${API_URL}/settings`, { headers: getAuthHeaders() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al obtener configuración');
+    return data;
+}
+
+export async function updateSettings(settings: Record<string, string>): Promise<void> {
+    const response = await fetch(`${API_URL}/settings`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ settings }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al guardar configuración');
+}
+
+export async function bulkUpdateStatus(opIds: string[], status: 'Revisada' | 'Transferida'): Promise<{ updated: number }> {
+    const response = await fetch(`${API_URL}/orders/bulk-status`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ opIds, status }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error al actualizar estados');
+    return data;
 }

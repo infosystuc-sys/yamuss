@@ -150,27 +150,30 @@ export const OrderDetailScreen = () => {
                 </div>
             )}
 
-            {/* Validación de padrón TEM */}
-            {retentionData?.temValidation?.found && (
-                retentionData.temValidation.hasRetention ? (
+            {/* Validación de TEM */}
+            {retentionData?.temValidation && (
+                retentionData.temValidation.status === 'OK' ? (
                     <div className="flex items-start gap-3 p-4 rounded-xl border bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-200">
                         <span className="material-symbols-outlined text-xl mt-0.5">check_circle</span>
                         <p className="text-sm">
-                            <span className="font-semibold">Padrón TEM:</span> El proveedor figura en el padrón
-                            {retentionData.temValidation.periodo ? ` (${retentionData.temValidation.periodo})` : ''}.
-                            Retención TEM aplicada correctamente.
+                            <span className="font-semibold">TEM ({retentionData.temValidation.expectedRate}%):</span>{' '}
+                            {retentionData.temValidation.message}
+                            {retentionData.temValidation.found && retentionData.temValidation.periodo
+                                ? ` · Padrón TEM período ${retentionData.temValidation.periodo}`
+                                : ''}
                         </p>
                     </div>
                 ) : (
                     <div className="flex items-start gap-3 p-4 rounded-xl border bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-700 dark:text-red-200">
                         <span className="material-symbols-outlined text-xl mt-0.5">error</span>
                         <div className="text-sm">
-                            <p className="font-semibold">Padrón TEM: Se debe aplicar la retención</p>
-                            <p className="mt-0.5">
-                                El proveedor <strong>{retentionData.temValidation.nombre}</strong> figura en el Padrón TEM
-                                {retentionData.temValidation.periodo ? ` (período ${retentionData.temValidation.periodo})` : ''}.
-                                No se encontró retención TEM en esta orden de pago.
-                            </p>
+                            <p className="font-semibold">TEM ({retentionData.temValidation.expectedRate}%): Error</p>
+                            <p className="mt-0.5">{retentionData.temValidation.message}</p>
+                            {retentionData.temValidation.found && (
+                                <p className="mt-0.5 text-xs opacity-75">
+                                    {retentionData.temValidation.nombre} · Padrón período {retentionData.temValidation.periodo}
+                                </p>
+                            )}
                         </div>
                     </div>
                 )

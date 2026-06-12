@@ -3,19 +3,25 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getStatusStyle } from '../constants';
 import { PaymentOrder } from '../types';
-import { fetchOrders, fetchOrderComprobante } from '../services/api';
+import { fetchOrders, fetchOrderComprobante, bulkUpdateStatus } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 
 export const DashboardScreen = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMINISTRADOR';
   const canReview = user?.role !== 'ADMINISTRATIVO';
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [loadingPdf, setLoadingPdf] = useState<string | null>(null);
+
+  // Selección múltiple
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
 
   const handleViewComprobante = async (opId: string) => {
     if (loadingPdf) return;
@@ -36,18 +42,20 @@ export const DashboardScreen = () => {
     }
   };
 
+  const loadOrders = async () => {
+    try {
+      const data = await fetchOrders(statusFilter);
+      setOrders(data);
+      setSelectedIds(new Set());
+    } catch (err: any) {
+      setError(`Error al cargar las órdenes de pago: ${err.message || 'Desconocido'}`);
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadOrders = async () => {
-      try {
-        const data = await fetchOrders(statusFilter);
-        setOrders(data);
-      } catch (err: any) {
-        setError(`Error al cargar las órdenes de pago: ${err.message || 'Desconocido'}`);
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     loadOrders();
   }, [statusFilter]);
 
@@ -58,6 +66,40 @@ export const DashboardScreen = () => {
     op.provider.toLowerCase().includes(searchTerm.toLowerCase()) ||
     op.number.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const allSelected = filteredOrders.length > 0 && filteredOrders.every(o => selectedIds.has(o.id));
+  const someSelected = selectedIds.size > 0;
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredOrders.map(o => o.id)));
+    }
+  };
+
+  const toggleOne = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkStatus = async (status: 'Revisada' | 'Transferida') => {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    setBulkFeedback(null);
+    try {
+      const result = await bulkUpdateStatus(Array.from(selectedIds), status);
+      setBulkFeedback(`${result.updated} OP${result.updated !== 1 ? 's' : ''} marcadas como ${status}.`);
+      await loadOrders();
+    } catch (err: any) {
+      setBulkFeedback(`Error: ${err.message}`);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
 
   const stats = {
     pending: orders.filter(o => o.status === 'Pendiente' || (o.status as string)?.toUpperCase?.() === 'PENDIENTE').length,
@@ -105,7 +147,6 @@ export const DashboardScreen = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -136,8 +177,6 @@ export const DashboardScreen = () => {
               {showFilters ? 'Cerrar Filtros' : 'Filtros Avanzados'}
             </button>
           </div>
-
-
         </div>
       </div>
 
@@ -167,10 +206,62 @@ export const DashboardScreen = () => {
             <h3 className="font-serif text-xl font-semibold text-ink dark:text-white">Órdenes de pago</h3>
             <button className="text-primary text-xs font-bold hover:underline">Ver todo →</button>
           </div>
+
+          {/* Barra de acciones masivas */}
+          {isAdmin && someSelected && (
+            <div className="px-6 py-3 bg-primary/5 border-b border-primary/20 flex flex-wrap items-center gap-3">
+              <span className="text-xs font-bold text-primary">
+                {selectedIds.size} OP{selectedIds.size !== 1 ? 's' : ''} seleccionada{selectedIds.size !== 1 ? 's' : ''}
+              </span>
+              <div className="flex items-center gap-2 ml-auto">
+                {bulkFeedback && (
+                  <span className="text-xs font-medium text-ink-soft">{bulkFeedback}</span>
+                )}
+                <button
+                  onClick={() => handleBulkStatus('Revisada')}
+                  disabled={bulkLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-100 border border-sky-300 text-sky-700 text-xs font-bold hover:bg-sky-200 transition-colors disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[15px]">rate_review</span>
+                  Marcar Revisada{selectedIds.size > 1 ? 's' : ''}
+                </button>
+                <button
+                  onClick={() => handleBulkStatus('Transferida')}
+                  disabled={bulkLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-700 text-xs font-bold hover:bg-emerald-200 transition-colors disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[15px]">move_to_inbox</span>
+                  Marcar Transferida{selectedIds.size > 1 ? 's' : ''}
+                </button>
+                <button
+                  onClick={() => { setSelectedIds(new Set()); setBulkFeedback(null); }}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-border-light text-ink-soft text-xs font-medium hover:bg-slate-100 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[15px]">close</span>
+                  Cancelar
+                </button>
+              </div>
+              {bulkLoading && (
+                <span className="material-symbols-outlined text-[18px] animate-spin text-primary">progress_activity</span>
+              )}
+            </div>
+          )}
+
           <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-background-light dark:bg-slate-800/50 text-[10px] uppercase font-bold text-ink-muted tracking-[0.15em] border-b border-border-light">
+                  {isAdmin && (
+                    <th className="py-4 px-4 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        className="rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                        title="Seleccionar todo"
+                      />
+                    </th>
+                  )}
                   <th className="py-4 px-6">N° OP</th>
                   <th className="py-4 px-6">Proveedor</th>
                   <th className="py-4 px-6">Fecha</th>
@@ -182,9 +273,32 @@ export const DashboardScreen = () => {
               <tbody className="divide-y divide-border-light/60 dark:divide-slate-800">
                 {filteredOrders.map((op) => {
                   const st = getStatusStyle(op.status as any);
+                  const isSelected = selectedIds.has(op.id);
                   return (
-                    <tr key={op.id} className="hover:bg-background-light/70 dark:hover:bg-slate-800/30 transition-colors group">
-                      <td className="py-4 px-6 text-sm font-mono font-semibold text-ink-soft dark:text-slate-400">{op.number}</td>
+                    <tr
+                      key={op.id}
+                      className={`hover:bg-background-light/70 dark:hover:bg-slate-800/30 transition-colors group ${isSelected ? 'bg-primary/5 dark:bg-primary/10' : ''}`}
+                    >
+                      {isAdmin && (
+                        <td className="py-4 px-4">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleOne(op.id)}
+                            className="rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                          />
+                        </td>
+                      )}
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-mono font-semibold text-ink-soft dark:text-slate-400">{op.number}</span>
+                          {op.emailEnviado && (
+                            <span title="Comprobante enviado por email" className="text-emerald-500">
+                              <span className="material-symbols-outlined text-[16px]">mark_email_read</span>
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-4 px-6">
                         <p className="text-sm font-semibold text-ink dark:text-white line-clamp-1">{op.provider}</p>
                         {op.cbu && <p className="text-[11px] text-ink-muted font-mono">CBU: {op.cbu}</p>}
@@ -199,10 +313,7 @@ export const DashboardScreen = () => {
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium"
                           style={{ backgroundColor: st.bg, borderColor: st.border, color: st.main }}
                         >
-                          <span
-                            className="inline-block size-1.5 rounded-full"
-                            style={{ backgroundColor: st.main }}
-                          />
+                          <span className="inline-block size-1.5 rounded-full" style={{ backgroundColor: st.main }} />
                           {st.label}
                         </span>
                       </td>

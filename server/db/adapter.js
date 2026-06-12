@@ -2,13 +2,32 @@ import sql from 'mssql';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { getDbConfig } from './config.js';
+import { initializeDatabase } from './init.js';
 
 // ============================================================
 // POOL CACHE — Un pool por empresa. Nunca se comparten.
 // ============================================================
 const poolCache = new Map();
 let sqliteDb = null; // Fallback SQLite único (dev)
+let sqliteReady = null; // Promise: garantiza inicializar/migrar local.db una sola vez
 let globalType = 'mssql'; // Tipo activo
+
+/**
+ * Abre (o reutiliza) local.db y corre initializeDatabase sobre él una sola vez.
+ * Esto asegura que el fallback SQLite tenga el esquema al día (incluyendo migraciones)
+ * sin importar si la BD por defecto del arranque conectó por MSSQL.
+ */
+async function getSqliteDb() {
+    if (!sqliteReady) {
+        sqliteReady = (async () => {
+            const db = await open({ filename: './local.db', driver: sqlite3.Database });
+            sqliteDb = db;
+            await initializeDatabase(new DBSession(null, 'sqlite', db));
+            return db;
+        })();
+    }
+    return sqliteReady;
+}
 
 /**
  * Obtiene (o crea) el sql.ConnectionPool para la base de datos pedida.
@@ -116,10 +135,8 @@ export class DBAdapter {
 
     async _switchToSQLite() {
         console.log('🔄 Cambiando a SQLite Fallback...');
-        if (!sqliteDb) {
-            sqliteDb = await open({ filename: './local.db', driver: sqlite3.Database });
-            console.log('✅ Conectado a SQLite (local.db).');
-        }
+        await getSqliteDb();
+        console.log('✅ Conectado a SQLite (local.db).');
         globalType = 'sqlite';
         this.type = 'sqlite';
         this._session = new DBSession(null, 'sqlite', sqliteDb);
@@ -144,9 +161,7 @@ export class DBAdapter {
 export async function createSession(database) {
     if (globalType === 'sqlite' || !database) {
         // Fallback SQLite activo
-        if (!sqliteDb) {
-            sqliteDb = await open({ filename: './local.db', driver: sqlite3.Database });
-        }
+        await getSqliteDb();
         return new DBSession(null, 'sqlite', sqliteDb);
     }
 
@@ -155,9 +170,7 @@ export async function createSession(database) {
         return new DBSession(pool, 'mssql', null);
     } catch (err) {
         console.warn(`⚠️  No se pudo obtener pool para '${database}': ${err.message}`);
-        if (!sqliteDb) {
-            sqliteDb = await open({ filename: './local.db', driver: sqlite3.Database });
-        }
+        await getSqliteDb();
         return new DBSession(null, 'sqlite', sqliteDb);
     }
 }

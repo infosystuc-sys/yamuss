@@ -11,6 +11,7 @@ import { BatchHistoryScreen } from './screens/BatchHistoryScreen';
 import { ImportScreen } from './screens/ImportScreen';
 import { SuccessScreen } from './screens/SuccessScreen';
 import { UsersScreen } from './screens/UsersScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { switchCompany } from './services/api';
 
@@ -44,8 +45,7 @@ const Sidebar = () => {
         <div>
           <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Menu Principal</h3>
           <nav className="flex flex-col space-y-1">
-            <NavLink to="/dashboard" icon="dashboard" label="Dashboard" />
-            <NavLink to="/dashboard" icon="payments" label="Órdenes de Pago" />
+            <NavLink to="/dashboard" icon="payments" label="Panel de Orden de Pago" />
           </nav>
         </div>
         <div>
@@ -65,6 +65,7 @@ const Sidebar = () => {
             <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Administración</h3>
             <nav className="flex flex-col space-y-1">
               <NavLink to="/users" icon="manage_accounts" label="Gestión de Usuarios" />
+              <NavLink to="/settings" icon="tune" label="Parámetros Iniciales" />
             </nav>
           </div>
         )}
@@ -144,7 +145,7 @@ const Header = () => {
               <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
             </div>
             <div>
-              <h2 className="text-lg font-black leading-tight tracking-tight text-slate-900 dark:text-white">Finance Portal</h2>
+              <h2 className="text-lg font-black leading-tight tracking-tight text-slate-900 dark:text-white">Gestión de Pagos</h2>
             </div>
           </Link>
           {user && (
@@ -283,6 +284,11 @@ const AppRoutes: React.FC = () => {
         <Route path="/users" element={
           <ProtectedRoute roles={ADMIN_ONLY}>
             <DashboardLayout><UsersScreen /></DashboardLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/settings" element={
+          <ProtectedRoute roles={ADMIN_ONLY}>
+            <DashboardLayout><SettingsScreen /></DashboardLayout>
           </ProtectedRoute>
         } />
         <Route path="/success" element={<SuccessScreen />} />

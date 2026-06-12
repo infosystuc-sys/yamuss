@@ -1,6 +1,6 @@
 @echo off
 echo ===================================================
-echo Iniciando Finance Portal - MODO PRUEBA
+echo Iniciando Gestión de Pagos - MODO PRUEBA
 echo ===================================================
 echo.
 echo Asegurate de que el archivo .env tenga configurado:
@@ -8,10 +8,10 @@ echo DB_DATABASE=PRUEBA
 echo TEST_EMAIL_RECIPIENT=rivadeneirag@hotmail.com
 echo.
 echo Iniciando servidor Backend...
-start "Finance Portal - Backend" cmd /k "npm run server"
+start "Gestión de Pagos - Backend" cmd /k "npm run server"
 
 echo Iniciando servidor Frontend...
-start "Finance Portal - Frontend" cmd /k "npm run dev"
+start "Gestión de Pagos - Frontend" cmd /k "npm run dev"
 
 echo.
 echo ===================================================

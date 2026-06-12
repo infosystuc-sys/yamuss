@@ -1,6 +1,6 @@
 @echo off
 echo ===================================================
-echo Generador de Ejecutable - Finance Portal
+echo Generador de Ejecutable - Gestión de Pagos
 echo ===================================================
 echo Este script compilara todo el proyecto (Frontend + Backend)
 echo y generara un unico archivo ejecutable en la carpeta "build".

@@ -136,16 +136,19 @@ export const ProcessingScreen = () => {
                   }} />
                 </th>
                 <th className="p-4">Orden Pago</th>
+                <th className="p-4">Cód. Prov.</th>
                 <th className="p-4">Proveedor</th>
+                <th className="p-4">CUIT</th>
+                <th className="p-4">CBU</th>
                 <th className="p-4">Fecha</th>
                 <th className="p-4 text-right">Importe</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
               {loading ? (
-                <tr><td colSpan={5} className="p-8 text-center">Cargando órdenes revisadas...</td></tr>
+                <tr><td colSpan={8} className="p-8 text-center">Cargando órdenes revisadas...</td></tr>
               ) : orders.length === 0 ? (
-                <tr><td colSpan={5} className="p-12 text-center text-slate-400 italic">No hay órdenes revisadas pendientes de pago.</td></tr>
+                <tr><td colSpan={8} className="p-12 text-center text-slate-400 italic">No hay órdenes revisadas pendientes de pago.</td></tr>
               ) : (
                 orders.map(op => (
                   <tr key={op.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.has(op.id) ? 'bg-indigo-50 dark:bg-indigo-900/10' : ''}`}>
@@ -158,7 +161,10 @@ export const ProcessingScreen = () => {
                       />
                     </td>
                     <td className="p-4 font-mono font-bold text-slate-600">{op.number}</td>
+                    <td className="p-4 font-mono text-slate-500 text-xs">{op.providerCode || '—'}</td>
                     <td className="p-4 font-medium text-slate-800">{op.provider}</td>
+                    <td className="p-4 font-mono text-slate-500 text-xs">{op.cuit || '—'}</td>
+                    <td className="p-4 font-mono text-slate-500 text-xs">{op.cbu || '—'}</td>
                     <td className="p-4 text-slate-500 text-xs">{op.date}</td>
                     <td className="p-4 text-right font-bold text-slate-900">$ {op.netAmount.toLocaleString('es-AR')}</td>
                   </tr>

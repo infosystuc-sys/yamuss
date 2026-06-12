@@ -292,6 +292,9 @@ export const BatchHistoryScreen = () => {
                                     <th className="py-3 px-4">N° OP</th>
                                     <th className="py-3 px-4">Proveedor</th>
                                     <th className="py-3 px-4 text-right">Importe</th>
+                                    <th className="py-3 px-4 text-center" title="Email enviado">
+                                      <span className="material-symbols-outlined text-[16px]">mail</span>
+                                    </th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border-light/60">
@@ -316,6 +319,12 @@ export const BatchHistoryScreen = () => {
                                         <td className="py-3 px-4 text-ink">{(item as any).providerName ?? item.providerName ?? '-'}</td>
                                         <td className="py-3 px-4 text-right font-semibold font-mono text-ink">
                                           $ {fmt((item as any).amount ?? item.amount)}
+                                        </td>
+                                        <td className="py-3 px-4 text-center">
+                                          {(item as any).emailEnviado
+                                            ? <span title="Comprobante enviado por email" className="material-symbols-outlined text-[18px] text-emerald-500">mark_email_read</span>
+                                            : <span title="No enviado" className="material-symbols-outlined text-[18px] text-slate-300">mail</span>
+                                          }
                                         </td>
                                       </tr>
                                     );

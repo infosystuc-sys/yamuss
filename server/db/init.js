@@ -29,23 +29,34 @@ export async function initializeDatabase(adapter) {
             if (existsSqlite.recordset.length === 0) {
                 await adapter.query(`
                     CREATE TABLE APP_OP_ESTADOS (
-                        N_COMP TEXT PRIMARY KEY, 
-                        ESTADO TEXT NOT NULL DEFAULT 'Pendiente', 
+                        N_COMP TEXT PRIMARY KEY,
+                        ESTADO TEXT NOT NULL DEFAULT 'Pendiente',
                         FECHA_MODIFICACION TEXT ${T.default_now()},
-                        USUARIO_MODIFICACION TEXT
+                        USUARIO_MODIFICACION TEXT,
+                        EMAIL_ENVIADO INTEGER DEFAULT 0
                     );
                 `);
+            } else {
+                // Agregar columna si no existe (SQLite: try/catch porque no soporta IF NOT EXISTS en ALTER)
+                try { await adapter.query("ALTER TABLE APP_OP_ESTADOS ADD COLUMN EMAIL_ENVIADO INTEGER DEFAULT 0"); } catch (_) {}
             }
         } else {
             const existsMssql = await adapter.query("SELECT * FROM sys.tables WHERE name = 'APP_OP_ESTADOS'");
             if (existsMssql.recordset.length === 0) {
                 await adapter.query(`
                     CREATE TABLE APP_OP_ESTADOS (
-                        N_COMP VARCHAR(50) PRIMARY KEY, 
-                        ESTADO VARCHAR(20) NOT NULL DEFAULT 'Pendiente', 
+                        N_COMP VARCHAR(50) PRIMARY KEY,
+                        ESTADO VARCHAR(20) NOT NULL DEFAULT 'Pendiente',
                         FECHA_MODIFICACION DATETIME DEFAULT GETDATE(),
-                        USUARIO_MODIFICACION VARCHAR(50)
+                        USUARIO_MODIFICACION VARCHAR(50),
+                        EMAIL_ENVIADO BIT DEFAULT 0
                     );
+                `);
+            } else {
+                // Agregar columna si ya existe la tabla pero le falta la columna
+                await adapter.query(`
+                    IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('APP_OP_ESTADOS') AND name = 'EMAIL_ENVIADO')
+                        ALTER TABLE APP_OP_ESTADOS ADD EMAIL_ENVIADO BIT DEFAULT 0
                 `);
             }
         }
@@ -373,6 +384,16 @@ export async function initializeDatabase(adapter) {
             tablesExist = res.recordset[0].count > 0;
         }
 
+        // Migración: agregar columnas nuevas a CPA01 en bases SQLite ya existentes
+        if (isSqlite && tablesExist) {
+            const cpa01Cols = (await adapter.query("PRAGMA table_info(CPA01)")).recordset.map(c => c.name);
+            for (const col of ['N_CUIT', 'CBU', 'E_MAIL']) {
+                if (!cpa01Cols.includes(col)) {
+                    await adapter.query(`ALTER TABLE CPA01 ADD COLUMN ${col} TEXT`);
+                }
+            }
+        }
+
         if (!tablesExist) {
             console.log(`Entorno detectado: Desarrollo (${isSqlite ? 'SQLite' : 'SQL Server Mock'}).`);
             console.log("Creando tablas simuladas...");
@@ -387,11 +408,15 @@ export async function initializeDatabase(adapter) {
                     COD_PROVEE ${T.string(15)} PRIMARY KEY,
                     NOM_PROVEE ${T.string(60)},
                     N_CUIT ${T.string(13)},
-                    CBU ${T.string(22)}
+                    CBU ${T.string(22)},
+                    E_MAIL ${T.string(100)},
+                    ING_BRUTOS ${T.string(20)},
+                    DOMICILIO ${T.string(100)},
+                    LOCALIDAD ${T.string(50)}
                 );
             `);
-            await runQuery(`INSERT INTO CPA01 (COD_PROVEE, NOM_PROVEE, N_CUIT, CBU) VALUES ('PROV01', 'EMPRESA EJEMPLO S.A.', '30-11223344-5', '0110000000000000000022')`);
-            await runQuery(`INSERT INTO CPA01 (COD_PROVEE, NOM_PROVEE, N_CUIT, CBU) VALUES ('PROV02', 'SERVICIOS IT SRL', '33-55667788-9', '0170000000000000000033')`);
+            await runQuery(`INSERT INTO CPA01 (COD_PROVEE, NOM_PROVEE, N_CUIT, CBU, E_MAIL) VALUES ('PROV01', 'EMPRESA EJEMPLO S.A.', '30-11223344-5', '0110000000000000000022', 'contacto@empresa.com')`);
+            await runQuery(`INSERT INTO CPA01 (COD_PROVEE, NOM_PROVEE, N_CUIT, CBU, E_MAIL) VALUES ('PROV02', 'SERVICIOS IT SRL', '33-55667788-9', '0170000000000000000033', 'admin@serviciosit.com')`);
 
             // MOCK 2: CPA04
             // Nota: SQLite datetime functions son diferentes, el insert debe ser limpio
@@ -515,6 +540,36 @@ export async function initializeDatabase(adapter) {
 
             console.log("Tablas simuladas creadas correctamente.");
         }
+
+        // APP_CONFIG — parámetros globales de la aplicación (idempotente)
+        if (isSqlite) {
+            const cfgExists = await adapter.query("SELECT name FROM sqlite_master WHERE type='table' AND name='APP_CONFIG'");
+            if (cfgExists.recordset.length === 0) {
+                await adapter.query(`
+                    CREATE TABLE APP_CONFIG (
+                        CLAVE TEXT PRIMARY KEY,
+                        VALOR TEXT,
+                        DESCRIPCION TEXT,
+                        FECHA_MODIFICACION TEXT DEFAULT (datetime('now','localtime'))
+                    )
+                `);
+                await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('EMAIL_FROM', '', 'Dirección de email remitente para el envío de comprobantes')`);
+            }
+        } else {
+            const cfgExists = await adapter.query("SELECT * FROM sys.tables WHERE name = 'APP_CONFIG'");
+            if (cfgExists.recordset.length === 0) {
+                await adapter.query(`
+                    CREATE TABLE APP_CONFIG (
+                        CLAVE VARCHAR(100) PRIMARY KEY,
+                        VALOR VARCHAR(500) NULL,
+                        DESCRIPCION VARCHAR(255) NULL,
+                        FECHA_MODIFICACION DATETIME DEFAULT GETDATE()
+                    )
+                `);
+                await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('EMAIL_FROM', '', 'Dirección de email remitente para el envío de comprobantes')`);
+            }
+        }
+        console.log('Tabla APP_CONFIG verificada.');
 
     } catch (error) {
         console.error("Error CRÍTICO al inicializar DB:", error);

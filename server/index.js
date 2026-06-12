@@ -47,15 +47,16 @@ async function getMasterDb() {
 async function fetchEstados(nComps) {
     if (!nComps || nComps.length === 0) return {};
     const masterDb = await getMasterDb();
-    // Construir IN list con parámetros seguros
     const placeholders = nComps.map((_, i) => `@comp${i}`).join(',');
     const req = masterDb.request();
     nComps.forEach((n, i) => req.input(`comp${i}`, 'VarChar', n));
     const result = await req.query(
-        `SELECT N_COMP, ESTADO FROM APP_OP_ESTADOS WITH (NOLOCK) WHERE N_COMP IN (${placeholders})`
+        `SELECT N_COMP, ESTADO, ISNULL(EMAIL_ENVIADO, 0) as EMAIL_ENVIADO FROM APP_OP_ESTADOS WITH (NOLOCK) WHERE N_COMP IN (${placeholders})`
     );
     const map = {};
-    for (const row of result.recordset) map[row.N_COMP] = row.ESTADO;
+    for (const row of result.recordset) {
+        map[row.N_COMP] = { estado: row.ESTADO, emailEnviado: !!row.EMAIL_ENVIADO };
+    }
     return map;
 }
 
@@ -387,6 +388,40 @@ app.delete('/api/users/:id', requireRole('ADMINISTRADOR'), async (req, res) => {
     }
 });
 
+// ---- PARÁMETROS INICIALES ----
+
+app.get('/api/settings', requireRole('ADMINISTRADOR'), async (req, res) => {
+    try {
+        const masterDb = await getMasterDb();
+        const result = await masterDb.request()
+            .query(`SELECT CLAVE, VALOR, DESCRIPCION FROM ${MASTER_DB}.dbo.APP_CONFIG`);
+        const settings = {};
+        for (const row of result.recordset) {
+            settings[row.CLAVE] = { valor: row.VALOR || '', descripcion: row.DESCRIPCION || '' };
+        }
+        res.json(settings);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/settings', requireRole('ADMINISTRADOR'), async (req, res) => {
+    try {
+        const { settings } = req.body;
+        if (!settings || typeof settings !== 'object') return res.status(400).json({ error: 'Payload inválido' });
+        const masterDb = await getMasterDb();
+        for (const [clave, valor] of Object.entries(settings)) {
+            await masterDb.request()
+                .input('clave', 'VarChar', clave)
+                .input('valor', 'VarChar', String(valor ?? ''))
+                .query(`UPDATE ${MASTER_DB}.dbo.APP_CONFIG SET VALOR = @valor, FECHA_MODIFICACION = GETDATE() WHERE CLAVE = @clave`);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Importar Padrón Rentas (ADMINISTRADOR u OPERADOR)
 app.post('/api/padron/import', authenticate, requireRole('ADMINISTRADOR', 'OPERADOR'), upload.single('file'), (req, res) => {
     importarPadron(req, res, adapter);
@@ -429,7 +464,7 @@ app.get('/api/orders/:id', async (req, res) => {
         const row = result.recordset[0];
         const cleanNumber = (row.number || '').trim();
         const estados = await fetchEstados([cleanNumber]);
-        const appStatus = estados[cleanNumber] || 'Pendiente';
+        const appStatus = estados[cleanNumber]?.estado || 'Pendiente';
 
         // Diagnóstico: ver registros crudos en SBA05 para esta OP
         try {
@@ -497,7 +532,9 @@ app.get('/api/orders', async (req, res) => {
             SELECT TOP 50
                 op.N_COMP as number,
                 op.COD_PROVEE as providerId,
+                prov.COD_PROVEE as providerCode,
                 prov.NOM_PROVEE as providerName,
+                ISNULL(prov.N_CUIT, '') as cuit,
                 ISNULL(prov.CBU, '') as cbu,
                 ISNULL(prov.E_MAIL, '') as email,
                 op.FECHA_EMIS as date,
@@ -524,13 +561,15 @@ app.get('/api/orders', async (req, res) => {
                 id: num,
                 number: num,
                 provider: row.providerName || row.providerId,
-                cuit: '00-00000000-0',
+                providerCode: String(row.providerCode ?? row.providerId ?? '').trim(),
+                cuit: (row.cuit || '').trim(),
                 cbu: (row.cbu || '').trim(),
                 email: (row.email || '').trim(),
                 date: new Date(row.date).toISOString().split('T')[0],
                 grossAmount: row.amount,
                 netAmount: row.amount,
-                status: estadosMap[num] || 'Pendiente',
+                status: estadosMap[num]?.estado || 'Pendiente',
+                emailEnviado: estadosMap[num]?.emailEnviado || false,
                 initials: (row.providerName || row.providerId || '?').substring(0, 2).toUpperCase()
             };
         });
@@ -666,13 +705,14 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
         const cuit = provResult.recordset[0]?.CUIT;
 
         let padronData = null;
+        let convenio = '';
         let validation = { status: 'OK', message: 'Coincide con padrón' };
         let temValidation = null;
 
         if (cuit) {
             const cleanCuit = cuit.trim();
 
-            const padronQuery = `SELECT PORCENTAJE as ALICUOTA, FECHA_IMPORTACION FROM ${MASTER_DB}.dbo.PADRON_RENTAS WHERE CUIT = @cuit`;
+            const padronQuery = `SELECT PORCENTAJE as ALICUOTA, CONVENIO, FECHA_IMPORTACION FROM ${MASTER_DB}.dbo.PADRON_RENTAS WHERE CUIT = @cuit`;
             const padronResult = await db.request()
                 .input('cuit', 'VarChar', cleanCuit)
                 .query(padronQuery);
@@ -680,6 +720,9 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
             if (padronResult.recordset.length > 0) {
                 padronData = padronResult.recordset[0];
                 const padronRate = padronData.ALICUOTA;
+                convenio = (padronData.CONVENIO || '').trim().toUpperCase();
+                // Convenio Multilateral (CM): la retención de IIBB se aplica sobre la mitad de la alícuota
+                const expectedIIBBRate = convenio === 'CM' ? padronRate / 2 : padronRate;
                 const importDate = padronData.FECHA_IMPORTACION ? new Date(padronData.FECHA_IMPORTACION) : null;
 
                 if (importDate) {
@@ -699,17 +742,19 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
                     return name.includes('BRUTOS') || name.includes('IIBB') || name.includes('IB') || name.includes('RENTAS');
                 });
 
+                const convenioLabel = convenio === 'CM' ? ` (CM: ${padronRate}% ÷ 2)` : '';
+
                 if (iibbRet) {
                     if (iibbRet.amount > 0) {
                         const effectiveRate = (iibbRet.amount / iibbRet.baseAmount) * 100;
-                        const rateMatch = Math.abs(effectiveRate - padronRate) < 0.05;
+                        const rateMatch = Math.abs(effectiveRate - expectedIIBBRate) < 0.05;
 
                         if (rateMatch && validation.status !== 'WARNING') {
-                            validation = { status: 'OK', message: `Coincide: ${padronRate}% (IIBB Detectado)` };
+                            validation = { status: 'OK', message: `Coincide: ${expectedIIBBRate}%${convenioLabel} (IIBB Detectado)` };
                         } else if (!rateMatch) {
                             validation = {
                                 status: 'ERROR',
-                                message: `Discrepancia: Padrón indica ${padronRate}%, pero se retuvo efectivamente un ${effectiveRate.toFixed(2)}%`
+                                message: `Discrepancia: se esperaba ${expectedIIBBRate}%${convenioLabel}, pero se retuvo efectivamente un ${effectiveRate.toFixed(2)}%`
                             };
                         }
                     } else {
@@ -726,10 +771,10 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
                         }
                     }
                 } else {
-                    if (padronRate > 0) {
+                    if (expectedIIBBRate > 0) {
                         validation = {
                             status: 'ERROR',
-                            message: `Falta Retención: Padrón indica ${padronRate}%. No se encontró retención de IIBB.`
+                            message: `Falta Retención: se esperaba ${expectedIIBBRate}%${convenioLabel}. No se encontró retención de IIBB.`
                         };
                     }
                 }
@@ -750,20 +795,62 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
                     .input('cuit', 'VarChar', cleanCuit)
                     .query(`SELECT NOMBRE, PERIODO FROM ${MASTER_DB}.dbo.PADRON_TEM WHERE CUIT = @cuit`);
 
-                if (temResult.recordset.length > 0) {
+                const inPadronTEM = temResult.recordset.length > 0;
+
+                // Tasa TEM esperada según padrón TEM y convenio IIBB:
+                // - No figura en padrón TEM           → 2.5%
+                // - Figura en padrón TEM, convenio CM → 0.625%
+                // - Figura en padrón TEM, otro conv.  → 1.25%
+                let expectedTEMRate;
+                if (!inPadronTEM) {
+                    expectedTEMRate = 2.5;
+                } else if (convenio === 'CM') {
+                    expectedTEMRate = 0.625;
+                } else {
+                    expectedTEMRate = 1.25;
+                }
+
+                const temRet = retentions.find(r => {
+                    const n = (r.name || '').toUpperCase();
+                    return n.includes('TEM') || n.includes('MUNIC') || n.includes('TASAS');
+                });
+                const hasTEMRetention = !!(temRet && temRet.amount > 0);
+
+                let temStatus, temMessage;
+                if (hasTEMRetention) {
+                    const effectiveTEMRate = (temRet.amount / temRet.baseAmount) * 100;
+                    const rateMatch = Math.abs(effectiveTEMRate - expectedTEMRate) < 0.01;
+                    if (rateMatch) {
+                        temStatus = 'OK';
+                        temMessage = `Correcto: ${expectedTEMRate}% aplicado. Tasa efectiva: ${effectiveTEMRate.toFixed(3)}%`;
+                    } else {
+                        temStatus = 'ERROR';
+                        temMessage = `Discrepancia TEM: se esperaba ${expectedTEMRate}%, se retuvo efectivamente ${effectiveTEMRate.toFixed(3)}%`;
+                    }
+                } else {
+                    temStatus = 'ERROR';
+                    temMessage = `Falta retención TEM: corresponde ${expectedTEMRate}%${inPadronTEM ? ' (figura en padrón TEM)' : ' (tasa general)'}`;
+                }
+
+                if (inPadronTEM) {
                     const temRow = temResult.recordset[0];
-                    const hasTEMRetention = retentions.some(r => {
-                        const n = (r.name || '').toUpperCase();
-                        return n.includes('TEM') || n.includes('MUNIC') || n.includes('TASAS');
-                    });
                     temValidation = {
                         found: true,
                         nombre: temRow.NOMBRE,
                         periodo: temRow.PERIODO,
                         hasRetention: hasTEMRetention,
+                        expectedRate: expectedTEMRate,
+                        status: temStatus,
+                        message: temMessage,
                     };
                 } else {
-                    temValidation = { found: false, hasRetention: false };
+                    temValidation = {
+                        found: false,
+                        hasRetention: hasTEMRetention,
+                        expectedRate: expectedTEMRate,
+                        status: temStatus,
+                        message: temMessage,
+                    };
                 }
             } catch (temErr) {
                 console.warn('No se pudo verificar PADRON_TEM:', temErr.message);
@@ -783,6 +870,50 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
+// Cambio masivo de estado de OPs
+app.post('/api/orders/bulk-status',
+    requireRole('ADMINISTRADOR'),
+    async (req, res) => {
+        try {
+            const { opIds, status } = req.body;
+            if (!Array.isArray(opIds) || opIds.length === 0) return res.status(400).json({ error: 'opIds requerido' });
+            const allowed = ['Revisada', 'Transferida'];
+            if (!allowed.includes(status)) return res.status(400).json({ error: 'Estado no válido. Use Revisada o Transferida.' });
+
+            const username = req.user.username;
+            const masterDb = await getMasterDb();
+            let updated = 0;
+
+            for (const opId of opIds) {
+                const id = String(opId).trim();
+                const exists = await masterDb.request()
+                    .input('id', 'VarChar', id)
+                    .query(`SELECT N_COMP FROM ${MASTER_DB}.dbo.APP_OP_ESTADOS WHERE LTRIM(RTRIM(N_COMP)) = LTRIM(RTRIM(@id))`);
+
+                if (exists.recordset.length > 0) {
+                    await masterDb.request()
+                        .input('id', 'VarChar', id)
+                        .input('status', 'VarChar', status)
+                        .input('user', 'VarChar', username)
+                        .query(`UPDATE ${MASTER_DB}.dbo.APP_OP_ESTADOS SET ESTADO = @status, FECHA_MODIFICACION = GETDATE(), USUARIO_MODIFICACION = @user WHERE LTRIM(RTRIM(N_COMP)) = LTRIM(RTRIM(@id))`);
+                } else {
+                    await masterDb.request()
+                        .input('id', 'VarChar', id)
+                        .input('status', 'VarChar', status)
+                        .input('user', 'VarChar', username)
+                        .query(`INSERT INTO ${MASTER_DB}.dbo.APP_OP_ESTADOS (N_COMP, ESTADO, USUARIO_MODIFICACION) VALUES (@id, @status, @user)`);
+                }
+                updated++;
+            }
+
+            res.json({ success: true, updated });
+        } catch (e) {
+            console.error('Error en bulk-status:', e);
+            res.status(500).json({ error: e.message });
+        }
+    }
+);
 
 // Confirmar Revisión — genera PDF comprobante (sin enviar email)
 app.post('/api/orders/:id/review',
@@ -1367,16 +1498,18 @@ app.get('/api/batches/:id', async (req, res) => {
 
         // Detalle desde BD maestra (PROVEEDOR y MONTO_PAGO ya guardados al crear el lote)
         const query = `
-            SELECT 
+            SELECT
                 ISNULL(d.N_COMP, d.N_COMP_OP) as number,
                 ISNULL(d.MONTO_PAGO, 0) as amount,
-                ISNULL(d.PROVEEDOR, '-') as providerName
+                ISNULL(d.PROVEEDOR, '-') as providerName,
+                ISNULL(e.EMAIL_ENVIADO, 0) as emailEnviado
             FROM APP_LOTES_DETALLE d WITH (NOLOCK)
             INNER JOIN APP_LOTES l WITH (NOLOCK) ON d.LOTE_ID = l.ID
+            LEFT JOIN APP_OP_ESTADOS e WITH (NOLOCK) ON LTRIM(RTRIM(e.N_COMP)) = LTRIM(RTRIM(ISNULL(d.N_COMP, d.N_COMP_OP)))
             WHERE d.LOTE_ID = ${loteId} AND ISNULL(l.[DATABASE], 'CENTRAL') = '${userDb}'
         `;
         const result = await masterDb.query(query);
-        res.json(result.recordset || []);
+        res.json((result.recordset || []).map(r => ({ ...r, emailEnviado: !!r.emailEnviado })));
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -1513,11 +1646,27 @@ app.post('/api/batches/:id/send-emails',
                     const pdfBuffer = await generateComprobantePDF({ company, provider, op, invoices: invResult.recordset, retentionsIB, retentionsTEM, account, treasuryMovements });
                     console.log(`📄 [Lote ${loteId}] PDF generado para OP ${opId} (${pdfBuffer.length} bytes)`);
 
+                    // Leer EMAIL_FROM desde APP_CONFIG (con fallback a .env)
+                    let emailFrom;
+                    try {
+                        const cfgResult = await masterDb.request().query(`SELECT VALOR FROM ${MASTER_DB}.dbo.APP_CONFIG WHERE CLAVE = 'EMAIL_FROM'`);
+                        emailFrom = cfgResult.recordset[0]?.VALOR?.trim() || undefined;
+                    } catch { emailFrom = undefined; }
+
                     // Enviar email
-                    const emailRes = await sendComprobante({ providerEmail: provider.email, providerName: provider.name, opNumber: op.number, pdfBuffer });
+                    const emailRes = await sendComprobante({ providerEmail: provider.email, providerName: provider.name, opNumber: op.number, pdfBuffer, from: emailFrom });
                     opResult.sent = emailRes.sent;
                     opResult.recipient = emailRes.recipient;
                     opResult.reason = emailRes.reason || '';
+
+                    // Persistir flag de email enviado
+                    if (emailRes.sent) {
+                        try {
+                            await masterDb.request()
+                                .input('id', 'VarChar', String(opId).trim())
+                                .query(`UPDATE ${MASTER_DB}.dbo.APP_OP_ESTADOS SET EMAIL_ENVIADO = 1 WHERE LTRIM(RTRIM(N_COMP)) = LTRIM(RTRIM(@id))`);
+                        } catch (_) {}
+                    }
 
                 } catch (opErr) {
                     opResult.reason = opErr.message;
@@ -1560,13 +1709,15 @@ app.get(/(.*)/, (req, res) => {
 // -------------------------------------------------------------------------
 async function startServer() {
     try {
-        console.log("Iniciando servidor Finance Portal...");
+        console.log("Iniciando servidor Gestión de Pagos...");
 
         // Conectar a BD por defecto (para initializeDatabase)
         const db = await adapter.connect(process.env.DB_DATABASE);
 
-        // Inicializar esquema
-        await initializeDatabase(db);
+        // Inicializar esquema (si cayó a SQLite, getSqliteDb() ya lo inicializó)
+        if (db.type !== 'sqlite') {
+            await initializeDatabase(db);
+        }
 
         app.listen(PORT, () => {
             console.log(`\n✅ Servidor listo en puerto ${PORT}.`);
@@ -1586,7 +1737,7 @@ async function startServer() {
             }
         }).on('error', (err) => {
             if (err.code === 'EADDRINUSE') {
-                console.error(`\n❌ ERROR: El puerto ${PORT} ya está en uso. ¿Hay otro servidor de Finance Portal ejecutándose? Cierralo primero.`);
+                console.error(`\n❌ ERROR: El puerto ${PORT} ya está en uso. ¿Hay otro servidor de Gestión de Pagos ejecutándose? Cierralo primero.`);
                 process.exit(1);
             }
             throw err;

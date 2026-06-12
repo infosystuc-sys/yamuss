@@ -95,6 +95,9 @@ export async function generateComprobantePDF(data) {
   /* ── PÁGINAS ── */
   .page { width:190mm; margin: 0 auto; padding: 12mm 0 8mm; }
   .page-break { page-break-before: always; }
+  /* Hoja 1: ocupa el alto útil de la A4 (297mm − 20mm de márgenes) para fijar el pie abajo */
+  .page-1 { display:flex; flex-direction:column; min-height:275mm; }
+  .page-1 .page-bottom { margin-top:auto; }
 
   /* ── ENCABEZADO ── */
   .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; padding-bottom:10px; border-bottom:2px solid #222; }
@@ -103,12 +106,14 @@ export async function generateComprobantePDF(data) {
   .op-block { text-align:right; }
   .op-label { font-size:7pt; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#666; }
   .op-number { font-size:13pt; font-weight:700; margin:2px 0; }
-  .op-date { font-size:8pt; color:#555; }
+  .op-date { font-size:12pt; font-weight:700; color:#222; margin-top:2px; }
 
   /* ── SECCIONES ── */
   .section { margin-bottom:8px; }
   .section-label { font-size:7pt; font-weight:700; text-transform:uppercase; letter-spacing:.12em; color:#888; margin-bottom:4px; border-bottom:1px solid #e0e0e0; padding-bottom:2px; }
-  .provider-name { font-size:11pt; font-weight:700; margin-bottom:2px; }
+  .provider-name { font-size:17pt; font-weight:700; margin-bottom:3px; }
+  .provider-cuit { font-size:12pt; font-weight:700; color:#222; margin-bottom:2px; }
+  .provider-cbu { font-size:11pt; font-weight:600; color:#222; margin-bottom:2px; }
   .provider-meta { font-size:8pt; color:#555; line-height:1.6; }
 
   /* ── TABLAS ── */
@@ -156,7 +161,7 @@ export async function generateComprobantePDF(data) {
 <!-- ═══════════════════════════════════════
      HOJA 1 — ORDEN DE PAGO
 ═══════════════════════════════════════ -->
-<div class="page">
+<div class="page page-1">
 
   <div class="doc-header">
     <div>
@@ -177,9 +182,9 @@ export async function generateComprobantePDF(data) {
   <div class="section">
     <div class="section-label">Proveedor</div>
     <div class="provider-name">${provider.name ?? ''}</div>
-    <div class="provider-meta">
-      ${provider.email ? provider.email + ' · ' : ''}CUIT: ${provider.cuit ?? '-'}${provider.cbu ? ' · CBU: ' + provider.cbu : ''}
-    </div>
+    <div class="provider-cuit">CUIT: ${provider.cuit ?? '-'}</div>
+    <div class="provider-cbu">CBU: ${provider.cbu ?? '-'}</div>
+    ${provider.email ? `<div class="provider-meta">${provider.email}</div>` : ''}
   </div>
 
   <!-- Facturas imputadas -->
@@ -222,17 +227,20 @@ export async function generateComprobantePDF(data) {
     </table>
   </div>
 
-  <!-- Firmas -->
-  <div class="signatures">
-    <div class="sig-box"><div class="sig-label">Confeccionó</div></div>
-    <div class="sig-box"><div class="sig-label">Controló</div></div>
-    <div class="sig-box"><div class="sig-label">Autorizó</div></div>
-    <div class="sig-box"><div class="sig-label">Pagó</div></div>
-    <div class="sig-box"><div class="sig-label">Archivó</div></div>
-  </div>
+  <!-- Pie anclado al fondo de la hoja A4 -->
+  <div class="page-bottom">
+    <!-- Firmas -->
+    <div class="signatures">
+      <div class="sig-box"><div class="sig-label">Confeccionó</div></div>
+      <div class="sig-box"><div class="sig-label">Controló</div></div>
+      <div class="sig-box"><div class="sig-label">Autorizó</div></div>
+      <div class="sig-box"><div class="sig-label">Pagó</div></div>
+      <div class="sig-box"><div class="sig-label">Archivó</div></div>
+    </div>
 
-  <div class="doc-footer">
-    Finance Portal · Documento de control de tesorería · OP ${op.number ?? ''} · ${fmtDate(op.date)}
+    <div class="doc-footer">
+      Gestión de Pagos · Documento de control de tesorería · OP ${op.number ?? ''} · ${fmtDate(op.date)}
+    </div>
   </div>
 
 </div>
@@ -260,7 +268,7 @@ export async function generateComprobantePDF(data) {
   ${certBlock('TEM — Tasa de Educación Municipal', retentionsTEM)}
 
   <div class="doc-footer">
-    Finance Portal · Documento de control de tesorería · OP ${op.number ?? ''} · ${fmtDate(op.date)}
+    Gestión de Pagos · Documento de control de tesorería · OP ${op.number ?? ''} · ${fmtDate(op.date)}
   </div>
 
 </div>

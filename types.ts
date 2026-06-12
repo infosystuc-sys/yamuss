@@ -24,6 +24,7 @@ export interface PaymentOrder {
   id: string;
   number: string;
   provider: string;
+  providerCode?: string;
   cuit: string;
   cbu?: string;
   email?: string;
@@ -32,6 +33,7 @@ export interface PaymentOrder {
   netAmount: number;
   status: OPStatus;
   initials: string;
+  emailEnviado?: boolean;
   treasuryMovements?: TreasuryMovement[];
 }
 
@@ -74,6 +76,9 @@ export interface TemValidation {
   nombre?: string;
   periodo?: string;
   hasRetention: boolean;
+  expectedRate: number;
+  status: 'OK' | 'ERROR';
+  message: string;
 }
 
 export interface RetentionResponse {
