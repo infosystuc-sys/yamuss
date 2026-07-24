@@ -10,7 +10,7 @@ import { authenticate, requireRole, generateToken } from './middleware/authMiddl
 import { generateComprobantePDF } from './services/pdfService.js';
 import { generateLotePDF } from './services/batchPdfService.js';
 import { sendComprobante } from './services/emailService.js';
-import { getCompanyData } from './config/companyConfig.js';
+import { getCompanyDataFromDb } from './config/companyConfig.js';
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -411,10 +411,17 @@ app.put('/api/settings', requireRole('ADMINISTRADOR'), async (req, res) => {
         if (!settings || typeof settings !== 'object') return res.status(400).json({ error: 'Payload inválido' });
         const masterDb = await getMasterDb();
         for (const [clave, valor] of Object.entries(settings)) {
-            await masterDb.request()
+            const valorStr = String(valor ?? '');
+            const upd = await masterDb.request()
                 .input('clave', 'VarChar', clave)
-                .input('valor', 'VarChar', String(valor ?? ''))
-                .query(`UPDATE ${MASTER_DB}.dbo.APP_CONFIG SET VALOR = @valor, FECHA_MODIFICACION = GETDATE() WHERE CLAVE = @clave`);
+                .input('valor', 'VarChar', valorStr)
+                .query(`UPDATE APP_CONFIG SET VALOR = @valor, FECHA_MODIFICACION = GETDATE() WHERE CLAVE = @clave`);
+            if ((upd.rowsAffected?.[0] ?? 0) === 0) {
+                await masterDb.request()
+                    .input('clave', 'VarChar', clave)
+                    .input('valor', 'VarChar', valorStr)
+                    .query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES (@clave, @valor, '')`);
+            }
         }
         res.json({ success: true });
     } catch (e) {
@@ -631,10 +638,10 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
                     MAX(r.N_CERTIFIC) as certificado
                 FROM CPA29 r WITH (NOLOCK)
                 LEFT JOIN (
-                    SELECT COD_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO 
+                    SELECT COD_RETEN, TIPO_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO
                     FROM CPA28 WITH (NOLOCK)
-                    GROUP BY COD_RETEN
-                ) c ON r.COD_RETEN = c.COD_RETEN
+                    GROUP BY COD_RETEN, TIPO_RETEN
+                ) c ON r.COD_RETEN = c.COD_RETEN AND r.TIPO_RETEN = c.TIPO_RETEN
                 LEFT JOIN (
                     SELECT rc2.COD_RETEN, MAX(rce.MINIMO_BASE_CALCULO) as MINIMO_BASE_CALCULO
                     FROM RETENCION_COMPRAS rc2
@@ -656,10 +663,10 @@ app.get('/api/orders/:id/retentions', async (req, res) => {
                     MAX(r.N_CERTIFIC) as certificado
                 FROM CPA29 r WITH (NOLOCK)
                 LEFT JOIN (
-                    SELECT COD_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO 
+                    SELECT COD_RETEN, TIPO_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO
                     FROM CPA28 WITH (NOLOCK)
-                    GROUP BY COD_RETEN
-                ) c ON r.COD_RETEN = c.COD_RETEN
+                    GROUP BY COD_RETEN, TIPO_RETEN
+                ) c ON r.COD_RETEN = c.COD_RETEN AND r.TIPO_RETEN = c.TIPO_RETEN
                 WHERE LTRIM(RTRIM(r.N_COMP)) = LTRIM(RTRIM(@opNumber)) AND r.T_COMP = 'O/P'
                 GROUP BY r.COD_RETEN
             `;
@@ -986,14 +993,15 @@ app.post('/api/orders/:id/review',
             }
             const opRow = opResult.recordset[0];
 
-            // 2a-ext. Columnas opcionales de Tango (varían según versión: ING_BRUTOS, DOMICILIO, LOCALIDAD)
-            let provIibb = '', provAddress = '', provProvince = '';
+            // 2a-ext. Columnas opcionales de Tango (varían según versión: ING_BRUTOS, DOMICILIO, LOCALIDAD, CBU)
+            let provIibb = '', provAddress = '', provProvince = '', provCbu = '';
             try {
                 const extQuery = `
                     SELECT
                         ISNULL(prov.ING_BRUTOS, '') as provIibb,
                         ISNULL(prov.DOMICILIO, '')  as provAddress,
-                        ISNULL(prov.LOCALIDAD, '')  as provProvince
+                        ISNULL(prov.LOCALIDAD, '')  as provProvince,
+                        ISNULL(prov.CBU, '')        as provCbu
                     FROM CPA01 prov
                     WHERE prov.COD_PROVEE = (
                         SELECT COD_PROVEE FROM CPA04
@@ -1002,9 +1010,10 @@ app.post('/api/orders/:id/review',
                 `;
                 const extResult = await db.request().input('id', 'VarChar', id).query(extQuery);
                 if (extResult.recordset.length) {
-                    provIibb = extResult.recordset[0].provIibb || '';
-                    provAddress = extResult.recordset[0].provAddress || '';
-                    provProvince = extResult.recordset[0].provProvince || '';
+                    provIibb    = extResult.recordset[0].provIibb    || '';
+                    provAddress = extResult.recordset[0].provAddress  || '';
+                    provProvince= extResult.recordset[0].provProvince || '';
+                    provCbu     = extResult.recordset[0].provCbu      || '';
                 }
             } catch (extErr) {
                 console.warn(`⚠️  Columnas opcionales de CPA01 no disponibles en este Tango: ${extErr.message}`);
@@ -1031,10 +1040,10 @@ app.post('/api/orders/:id/review',
                     r.N_CERTIFIC                 as certificado
                 FROM CPA29 r
                 LEFT JOIN (
-                    SELECT COD_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO
+                    SELECT COD_RETEN, TIPO_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO
                     FROM CPA28
-                    GROUP BY COD_RETEN
-                ) c ON r.COD_RETEN = c.COD_RETEN
+                    GROUP BY COD_RETEN, TIPO_RETEN
+                ) c ON r.COD_RETEN = c.COD_RETEN AND r.TIPO_RETEN = c.TIPO_RETEN
                 WHERE LTRIM(RTRIM(r.N_COMP)) = LTRIM(RTRIM(@id)) AND r.T_COMP = 'O/P'
             `;
             const retResult = await db.request().input('id', 'VarChar', id).query(retQuery);
@@ -1124,7 +1133,7 @@ app.post('/api/orders/:id/review',
             // ----------------------------------------------------------------
             // 3. GENERAR PDF
             // ----------------------------------------------------------------
-            const company = getCompanyData(database);
+            const company = await getCompanyDataFromDb(db, database);
             const provider = {
                 name: opRow.provName,
                 cuit: opRow.provCuit,
@@ -1132,6 +1141,7 @@ app.post('/api/orders/:id/review',
                 address: provAddress,
                 province: provProvince,
                 email: opRow.provEmail,
+                cbu: provCbu,
             };
             const op = {
                 number: opRow.opNumber,
@@ -1224,7 +1234,7 @@ app.get('/api/orders/:id/comprobante',
                 SELECT r.COD_RETEN as code, ISNULL(c.DESCRIPCIO, r.COD_RETEN) as name,
                        r.IMP_PAGO as baseAmount, r.IMP_RETEN as amount, r.N_CERTIFIC as certificado
                 FROM CPA29 r
-                LEFT JOIN (SELECT COD_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO FROM CPA28 GROUP BY COD_RETEN) c ON r.COD_RETEN=c.COD_RETEN
+                LEFT JOIN (SELECT COD_RETEN, TIPO_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO FROM CPA28 GROUP BY COD_RETEN, TIPO_RETEN) c ON r.COD_RETEN=c.COD_RETEN AND r.TIPO_RETEN=c.TIPO_RETEN
                 WHERE LTRIM(RTRIM(r.N_COMP))=LTRIM(RTRIM(@id)) AND r.T_COMP='O/P'
             `);
             const allRet = retResult.recordset;
@@ -1262,7 +1272,7 @@ app.get('/api/orders/:id/comprobante',
                 }));
             } catch (_) { }
 
-            const company  = getCompanyData(database);
+            const company  = await getCompanyDataFromDb(db, database);
             const provider = { name: opRow.provName, cuit: opRow.provCuit, iibb: provIibb, address: provAddress, province: provProvince, email: opRow.provEmail, cbu: provCbu };
             const op       = { number: opRow.opNumber, date: opRow.opDate, grossAmount: opRow.grossAmount };
 
@@ -1310,44 +1320,30 @@ app.post('/api/treasury/process',
             const opsResult = await db.query(opsQuery);
             const opsData = opsResult.recordset;
 
-            const maxIdQuery = "SELECT ISNULL(MAX(N_INTERNO), 0) as MAX_ID FROM SBA04";
-            const maxIdRes = await db.query(maxIdQuery);
-            let ultimoNumero = maxIdRes.recordset[0]?.MAX_ID || 0;
+            const sinCbu = opsData.filter(op => !String(op.CBU || '').replace(/[^0-9]/g, ''));
+            if (sinCbu.length > 0) {
+                const nros = sinCbu.map(op => String(op.N_COMP || '').trim()).join(', ');
+                return res.status(400).json({
+                    error: `Las siguientes OPs no tienen CBU cargado y no pueden transferirse: ${nros}. Completá el CBU del proveedor en Tango antes de procesar.`
+                });
+            }
 
             let txtContent = '';
-            const idSba02 = 3;
 
             for (const op of opsData) {
-                ultimoNumero++;
-
                 const montoNeto = (op.IMPORTE_TO || 0) - (op.TOTAL_RETENCIONES || 0);
 
-                // Formato de Ancho Fijo (Fixed-Width)
-                const cbu = (op.CBU || '').replace(/[^0-9]/g, '').padEnd(22, ' ').substring(0, 22);
-                const importeStr = montoNeto.toFixed(2).padStart(15, '0');
-                const concepto = "FAC".padEnd(15, ' ').substring(0, 15);
-                const referencia = (op.N_COMP || '').trim().replace(/[^a-zA-Z0-9]/g, '').padEnd(15, ' ').substring(0, 15);
+                // Formato de Ancho Fijo (Fixed-Width) según "Diseño de Registro" del banco:
+                // CBU_CREDITO(22) + IMPORTE(12, centavos sin punto) + CONCEPTO(3) + REFERENCIA(12) + EMAIL(50) + CRLF
+                const cbu = (op.CBU || '').replace(/[^0-9]/g, '').padStart(22, '0').substring(0, 22);
+                const importeCentavos = Math.round(montoNeto * 100);
+                const importeStr = String(importeCentavos).padStart(12, '0');
+                const concepto = 'FAC'; // Uno de: VAR, ALQ, CUO, EXP, FAC, PRE, SEG, HON
+                const nComp = (op.N_COMP || '').trim().replace(/[^a-zA-Z0-9]/g, '');
+                const referencia = nComp.slice(-12).padEnd(12, ' ');
                 const email = (op.E_MAIL || '').padEnd(50, ' ').substring(0, 50);
 
                 txtContent += `${cbu}${importeStr}${concepto}${referencia}${email}\r\n`;
-
-                const timePart = Date.now().toString().slice(-9);
-                const seqPart = (ultimoNumero % 1000).toString().padStart(3, '0');
-                const nuevoMovimientoId = `A${timePart}${seqPart}`;
-
-                const nombreProv = (op.NOM_PROVEE || '').substring(0, 29);
-                const leyenda = `OP ${op.N_COMP} - ${nombreProv}`.substring(0, 40);
-                const observaciones = `Neto OP: ${op.N_COMP}`.substring(0, 40);
-
-                await db.query(`
-                    INSERT INTO SBA04 (ID_SBA02, N_COMP, N_INTERNO, FECHA, COTIZACION, TOTAL_IMPORTE_CTE, COD_COMP, OBSERVACIONES)
-                    VALUES (${idSba02}, '${nuevoMovimientoId}', ${ultimoNumero}, GETDATE(), 1, ${montoNeto}, 'O/P', '${observaciones.replace(/'/g, "''")}')
-                `);
-
-                await db.query(`
-                    INSERT INTO SBA05 (ID_SBA02, N_COMP, RENGLON, COD_CTA, D_H, MONTO, COTIZ_MONE, LEYENDA)
-                    VALUES (${idSba02}, '${nuevoMovimientoId}', 1, '${(accountId || 'CTA-BANCO').replace(/'/g, "''")}', 'H', ${montoNeto}, 1, '${leyenda.replace(/'/g, "''")}')
-                `);
             }
 
             const masterDb = await getMasterDb();
@@ -1427,7 +1423,7 @@ app.post('/api/treasury/process',
 
             let pdfBase64 = null;
             try {
-                const company = getCompanyData(database);
+                const company = await getCompanyDataFromDb(db, database);
                 const pdfItems = opsData.map(op => ({
                     nComp: op.N_COMP,
                     proveedor: op.NOM_PROVEE,
@@ -1558,7 +1554,7 @@ app.post('/api/batches/:id/send-emails',
 
             // 2. Para cada OP: extraer datos, generar PDF, enviar email
             const results = [];
-            const company = getCompanyData(database);
+            const company = await getCompanyDataFromDb(db, database);
 
             for (const opId of opNumbers) {
                 const opResult = { opNumber: opId, sent: false, recipient: null, reason: '' };
@@ -1605,7 +1601,7 @@ app.post('/api/batches/:id/send-emails',
                     const retResult = await db.request().input('id', 'VarChar', opId).query(`
                         SELECT r.COD_RETEN as code, ISNULL(c.DESCRIPCIO, r.COD_RETEN) as name,
                             r.IMP_PAGO as baseAmount, r.IMP_RETEN as amount, r.N_CERTIFIC as certificado
-                        FROM CPA29 r LEFT JOIN (SELECT COD_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO FROM CPA28 GROUP BY COD_RETEN) c ON r.COD_RETEN=c.COD_RETEN
+                        FROM CPA29 r LEFT JOIN (SELECT COD_RETEN, TIPO_RETEN, MAX(DESCRIPCIO) as DESCRIPCIO FROM CPA28 GROUP BY COD_RETEN, TIPO_RETEN) c ON r.COD_RETEN=c.COD_RETEN AND r.TIPO_RETEN=c.TIPO_RETEN
                         WHERE LTRIM(RTRIM(r.N_COMP))=LTRIM(RTRIM(@id)) AND r.T_COMP='O/P'
                     `);
                     const allRetentions = retResult.recordset;
@@ -1646,15 +1642,18 @@ app.post('/api/batches/:id/send-emails',
                     const pdfBuffer = await generateComprobantePDF({ company, provider, op, invoices: invResult.recordset, retentionsIB, retentionsTEM, account, treasuryMovements });
                     console.log(`📄 [Lote ${loteId}] PDF generado para OP ${opId} (${pdfBuffer.length} bytes)`);
 
-                    // Leer EMAIL_FROM desde APP_CONFIG (con fallback a .env)
-                    let emailFrom;
+                    // Leer credenciales SMTP y EMAIL_FROM desde APP_CONFIG (con fallback a .env)
+                    let emailFrom, smtpUser, smtpPass;
                     try {
-                        const cfgResult = await masterDb.request().query(`SELECT VALOR FROM ${MASTER_DB}.dbo.APP_CONFIG WHERE CLAVE = 'EMAIL_FROM'`);
-                        emailFrom = cfgResult.recordset[0]?.VALOR?.trim() || undefined;
-                    } catch { emailFrom = undefined; }
+                        const cfgResult = await masterDb.request().query(`SELECT CLAVE, VALOR FROM APP_CONFIG WHERE CLAVE IN ('EMAIL_FROM','SMTP_USER','SMTP_PASS')`);
+                        const cfg = Object.fromEntries((cfgResult.recordset || []).map(r => [r.CLAVE, r.VALOR?.trim() || undefined]));
+                        emailFrom = cfg['EMAIL_FROM'];
+                        smtpUser  = cfg['SMTP_USER'];
+                        smtpPass  = cfg['SMTP_PASS'];
+                    } catch { emailFrom = smtpUser = smtpPass = undefined; }
 
                     // Enviar email
-                    const emailRes = await sendComprobante({ providerEmail: provider.email, providerName: provider.name, opNumber: op.number, pdfBuffer, from: emailFrom });
+                    const emailRes = await sendComprobante({ providerEmail: provider.email, providerName: provider.name, opNumber: op.number, pdfBuffer, from: emailFrom, smtpUser, smtpPass });
                     opResult.sent = emailRes.sent;
                     opResult.recipient = emailRes.recipient;
                     opResult.reason = emailRes.reason || '';

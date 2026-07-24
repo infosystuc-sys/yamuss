@@ -40,6 +40,9 @@ uploads/
 # Claude Code internal files
 .claude/
 
+# Playwright MCP screenshots/test artifacts
+.playwright-mcp/
+
 # Debug / test output
 *.txt
 current_err.txt

@@ -8,7 +8,7 @@ import fs from 'fs';
 
 /**
  * @param {Object} data
- * @param {Object} data.company   — { name, cuit, address, phone }
+ * @param {Object} data.company   — { name, cuit, address, iibb, phone }
  * @param {number} data.loteId    — ID del lote
  * @param {string} data.fileName  — Nombre del archivo TXT asociado
  * @param {Array}  data.items    — [{ nComp, proveedor, monto }]
@@ -70,7 +70,7 @@ export async function generateLotePDF(data) {
     <div class="box">
       <div class="box-title">Emisor</div>
       <p><strong>${company?.name ?? 'Empresa'}</strong></p>
-      <p>CUIT: ${company?.cuit ?? '-'}</p>
+      <p>CUIT: ${company?.cuit ?? '-'}${company?.iibb ? ' · IIBB: ' + company.iibb : ''}</p>
       <p>Dom.: ${company?.address ?? '-'}</p>
     </div>
     <div class="box">
@@ -108,7 +108,15 @@ export async function generateLotePDF(data) {
 </body>
 </html>`;
 
+  // Preferimos el Chrome que descarga Puppeteer (más compatible con su protocolo).
+  // Si no está disponible (ej. .exe empaquetado sin caché de Puppeteer), caemos a
+  // Edge/Chrome del sistema.
   const getBrowserPath = () => {
+    try {
+      const bundled = puppeteer.executablePath();
+      if (bundled && fs.existsSync(bundled)) return bundled;
+    } catch { /* ignore */ }
+
     const paths = [
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',

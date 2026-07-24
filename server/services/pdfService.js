@@ -7,6 +7,24 @@
  */
 import puppeteer from 'puppeteer';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+
+// Firmas digitales precargadas (PNG con fondo transparente) en base64.
+function loadSignature(filename) {
+  try {
+    const filePath = path.join(currentDir, '..', 'assets', filename);
+    return `data:image/png;base64,${fs.readFileSync(filePath).toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+const FIRMA_KARIM = loadSignature('firma_karim.png');   // Controló / Pagó
+const FIRMA_SILVA = loadSignature('firma_silva.png');   // Certificados de retención (CPN)
 
 export async function generateComprobantePDF(data) {
   const {
@@ -33,10 +51,16 @@ export async function generateComprobantePDF(data) {
     ? `${account.code}${account.description ? ' — ' + account.description : ''}`
     : '—';
 
-  // Cálculo de alícuota aplicada
+  // Cálculo de alícuota aplicada: se calcula desde importe/base (hasta 3 decimales,
+  // sin ceros finales) porque la columna PORCENTAJE_RETENCION de Tango solo guarda
+  // 2 decimales y redondea alícuotas como 0,625% a 0,63%.
   const alicuota = (ret) => {
-    if (ret.appliedRate) return `${ret.appliedRate}%`;
-    if (ret.baseAmount && ret.amount) return `${((ret.amount / ret.baseAmount) * 100).toFixed(2)}%`;
+    if (ret.baseAmount && ret.amount) {
+      const rate = (ret.amount / ret.baseAmount) * 100;
+      const str = (Math.round(rate * 1000) / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+      return `${str.replace('.', ',')}%`;
+    }
+    if (ret.appliedRate) return `${String(ret.appliedRate).replace('.', ',')}%`;
     return '-';
   };
 
@@ -76,13 +100,57 @@ export async function generateComprobantePDF(data) {
         <div class="cert-section-title">${title}</div>
         <table class="cert-table">
           <tr><td class="cert-label">Certificado N°</td><td class="cert-value">${r.certificado ?? '-'}</td></tr>
+          <tr><td class="cert-label">Fecha</td><td class="cert-value">${fmtDate(op.date)}</td></tr>
           <tr><td class="cert-label">Alícuota aplicada</td><td class="cert-value">${alicuota(r)}</td></tr>
-          <tr><td class="cert-label">Base de cálculo</td><td class="cert-value">$ ${fmt(r.baseAmount)}</td></tr>
+          <tr><td class="cert-label">Importe pagado sujeto a retención / Base de cálculo</td><td class="cert-value">$ ${fmt(r.baseAmount)}</td></tr>
           <tr><td class="cert-label">Importe retenido</td><td class="cert-value bold">$ ${fmt(r.amount)}</td></tr>
         </table>
-        <div class="cert-firma">Firma y sello contador</div>
+        <div class="cert-firma">
+          ${FIRMA_SILVA ? `<img src="${FIRMA_SILVA}">` : ''}
+          Firma y sello contador
+        </div>
       </div>`).join('');
   };
+
+  const hasCerts = retentionsIB.length > 0 || retentionsTEM.length > 0;
+
+  /* ── HOJA 2 — CERTIFICADOS DE RETENCIÓN (omitida si no hay certificados) ── */
+  const certPageHtml = !hasCerts ? '' : `
+<div class="page page-break">
+
+  <div class="doc-header">
+    <div>
+      <div class="company-name">${company.name ?? ''}</div>
+      <div class="company-meta">
+        ${company.address ?? ''}<br>
+        CUIT: ${company.cuit ?? ''}${company.iibb ? ' · IIBB: ' + company.iibb : ''}<br>
+        ${company.email ?? company.phone ?? ''}
+      </div>
+    </div>
+    <div class="op-block">
+      <div class="op-label">Orden de Pago</div>
+      <div class="op-number">N° ${op.number ?? ''}</div>
+      <div class="op-date">Fecha: ${fmtDate(op.date)}</div>
+    </div>
+  </div>
+
+  <div class="cert-title">Certificados de retención</div>
+  <div class="cert-subtitle">OP N° ${op.number ?? ''} · Fecha: ${fmtDate(op.date)}</div>
+
+  <div class="cert-prov">
+    <strong>Proveedor:</strong> ${provider.name ?? ''} · <strong>CUIT:</strong> ${provider.cuit ?? '-'}
+    ${provider.email ? '<br>' + provider.email : ''}
+    ${provider.cbu ? ' · CBU: ' + provider.cbu : ''}
+  </div>
+
+  ${certBlock('Ingresos Brutos (IIBB)', retentionsIB)}
+  ${certBlock('TEM — Tasa de Educación Municipal', retentionsTEM)}
+
+  <div class="doc-footer">
+    Gestión de Pagos · Documento de control de tesorería · OP ${op.number ?? ''} · ${fmtDate(op.date)}
+  </div>
+
+</div>`;
 
   const html = `<!DOCTYPE html>
 <html lang="es">
@@ -104,7 +172,7 @@ export async function generateComprobantePDF(data) {
   .company-name { font-size:15pt; font-weight:700; font-family: Georgia, serif; margin-bottom:3px; }
   .company-meta { font-size:7.5pt; color:#555; line-height:1.6; }
   .op-block { text-align:right; }
-  .op-label { font-size:7pt; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#666; }
+  .op-label { font-size:20pt; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#222; font-family: Georgia, serif; margin-bottom:4px; }
   .op-number { font-size:13pt; font-weight:700; margin:2px 0; }
   .op-date { font-size:12pt; font-weight:700; color:#222; margin-top:2px; }
 
@@ -132,16 +200,15 @@ export async function generateComprobantePDF(data) {
 
   /* ── FIRMAS ── */
   .signatures { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:12px; }
-  .sig-box { border:1px solid #ccc; height:48px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px; border-radius:2px; }
+  .sig-box { border:1px solid #ccc; height:48px; position:relative; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding-bottom:4px; border-radius:2px; }
   .sig-label { font-size:6.5pt; font-weight:700; text-transform:uppercase; color:#777; text-align:center; }
+  .sig-meta { font-size:6pt; color:#aaa; text-align:center; margin-top:2px; }
+  .sig-img { position:absolute; top:2px; left:50%; transform:translateX(-50%); max-height:30px; max-width:90%; object-fit:contain; }
 
   /* ── PIE ── */
   .doc-footer { margin-top:10px; padding-top:6px; border-top:1px solid #ddd; text-align:center; font-size:6.5pt; color:#aaa; }
 
   /* ── CERTIFICADOS (hoja 2) ── */
-  .cert-header { margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid #222; }
-  .cert-company { font-size:11pt; font-weight:700; font-family: Georgia, serif; }
-  .cert-company-meta { font-size:7.5pt; color:#555; }
   .cert-title { font-size:12pt; font-weight:700; font-family: Georgia, serif; margin:10px 0 2px; }
   .cert-subtitle { font-size:8pt; color:#666; margin-bottom:6px; }
   .cert-prov { font-size:8.5pt; margin-bottom:10px; }
@@ -153,7 +220,8 @@ export async function generateComprobantePDF(data) {
   .cert-table .cert-label { color:#555; width:55%; }
   .cert-table .cert-value { text-align:right; font-weight:500; }
   .cert-table .cert-value.bold { font-weight:700; font-size:9.5pt; }
-  .cert-firma { border:1px solid #ddd; border-top:none; text-align:center; padding:16px 8px 5px; font-size:7.5pt; color:#aaa; }
+  .cert-firma { border:1px solid #ddd; border-top:none; text-align:center; padding:8px 8px; font-size:7.5pt; color:#aaa; }
+  .cert-firma img { display:block; max-height:40px; max-width:160px; margin:4px auto 2px; object-fit:contain; }
 </style>
 </head>
 <body>
@@ -168,7 +236,8 @@ export async function generateComprobantePDF(data) {
       <div class="company-name">${company.name ?? ''}</div>
       <div class="company-meta">
         ${company.address ?? ''}<br>
-        CUIT: ${company.cuit ?? ''} · ${company.email ?? company.phone ?? ''}
+        CUIT: ${company.cuit ?? ''}${company.iibb ? ' · IIBB: ' + company.iibb : ''}<br>
+        ${company.email ?? company.phone ?? ''}
       </div>
     </div>
     <div class="op-block">
@@ -231,10 +300,19 @@ export async function generateComprobantePDF(data) {
   <div class="page-bottom">
     <!-- Firmas -->
     <div class="signatures">
-      <div class="sig-box"><div class="sig-label">Confeccionó</div></div>
-      <div class="sig-box"><div class="sig-label">Controló</div></div>
       <div class="sig-box"><div class="sig-label">Autorizó</div></div>
-      <div class="sig-box"><div class="sig-label">Pagó</div></div>
+      <div class="sig-box">
+        <div class="sig-label">Confeccionó</div>
+        <div class="sig-meta">${os.hostname()}</div>
+      </div>
+      <div class="sig-box">
+        ${FIRMA_KARIM ? `<img class="sig-img" src="${FIRMA_KARIM}">` : ''}
+        <div class="sig-label">Controló</div>
+      </div>
+      <div class="sig-box">
+        ${FIRMA_KARIM ? `<img class="sig-img" src="${FIRMA_KARIM}">` : ''}
+        <div class="sig-label">Pagó</div>
+      </div>
       <div class="sig-box"><div class="sig-label">Archivó</div></div>
     </div>
 
@@ -245,38 +323,20 @@ export async function generateComprobantePDF(data) {
 
 </div>
 
-<!-- ═══════════════════════════════════════
-     HOJA 2 — CERTIFICADOS DE RETENCIÓN
-═══════════════════════════════════════ -->
-<div class="page page-break">
-
-  <div class="cert-header">
-    <div class="cert-company">${company.name ?? ''}</div>
-    <div class="cert-company-meta">CUIT: ${company.cuit ?? ''} · ${company.email ?? company.phone ?? ''}</div>
-  </div>
-
-  <div class="cert-title">Certificados de retención</div>
-  <div class="cert-subtitle">OP N° ${op.number ?? ''} · Fecha: ${fmtDate(op.date)}</div>
-
-  <div class="cert-prov">
-    <strong>Proveedor:</strong> ${provider.name ?? ''} · <strong>CUIT:</strong> ${provider.cuit ?? '-'}
-    ${provider.email ? '<br>' + provider.email : ''}
-    ${provider.cbu ? ' · CBU: ' + provider.cbu : ''}
-  </div>
-
-  ${certBlock('Ingresos Brutos (IIBB)', retentionsIB)}
-  ${certBlock('TEM — Tasa de Educación Municipal', retentionsTEM)}
-
-  <div class="doc-footer">
-    Gestión de Pagos · Documento de control de tesorería · OP ${op.number ?? ''} · ${fmtDate(op.date)}
-  </div>
-
-</div>
+${certPageHtml}
 
 </body>
 </html>`;
 
+  // Preferimos el Chrome que descarga Puppeteer (más compatible con su protocolo).
+  // Si no está disponible (ej. .exe empaquetado sin caché de Puppeteer), caemos a
+  // Edge/Chrome del sistema.
   const getBrowserPath = () => {
+    try {
+      const bundled = puppeteer.executablePath();
+      if (bundled && fs.existsSync(bundled)) return bundled;
+    } catch { /* ignore */ }
+
     const paths = [
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',

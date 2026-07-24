@@ -554,6 +554,8 @@ export async function initializeDatabase(adapter) {
                     )
                 `);
                 await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('EMAIL_FROM', '', 'Dirección de email remitente para el envío de comprobantes')`);
+                await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('SMTP_USER', '', 'Usuario SMTP (cuenta Gmail desde la que se envían los emails)')`);
+                await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('SMTP_PASS', '', 'Contraseña de aplicación SMTP (no la contraseña de Gmail)')`);
             }
         } else {
             const cfgExists = await adapter.query("SELECT * FROM sys.tables WHERE name = 'APP_CONFIG'");
@@ -567,6 +569,8 @@ export async function initializeDatabase(adapter) {
                     )
                 `);
                 await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('EMAIL_FROM', '', 'Dirección de email remitente para el envío de comprobantes')`);
+                await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('SMTP_USER', '', 'Usuario SMTP (cuenta Gmail desde la que se envían los emails)')`);
+                await adapter.query(`INSERT INTO APP_CONFIG (CLAVE, VALOR, DESCRIPCION) VALUES ('SMTP_PASS', '', 'Contraseña de aplicación SMTP (no la contraseña de Gmail)')`);
             }
         }
         console.log('Tabla APP_CONFIG verificada.');

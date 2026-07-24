@@ -7,13 +7,20 @@ import { getStatusStyle } from '../constants';
 export const SettingsScreen = () => {
   // ── Email config ──────────────────────────────────────────────────────────
   const [emailFrom, setEmailFrom] = useState('');
+  const [smtpUser, setSmtpUser] = useState('');
+  const [smtpPass, setSmtpPass] = useState('');
+  const [showPass, setShowPass] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [saving, setSaving] = useState(false);
   const [emailFeedback, setEmailFeedback] = useState<{ type: 'ok' | 'error'; msg: string } | null>(null);
 
   useEffect(() => {
     fetchSettings()
-      .then(data => setEmailFrom(data['EMAIL_FROM']?.valor ?? ''))
+      .then(data => {
+        setEmailFrom(data['EMAIL_FROM']?.valor ?? '');
+        setSmtpUser(data['SMTP_USER']?.valor ?? '');
+        setSmtpPass(data['SMTP_PASS']?.valor ?? '');
+      })
       .catch(e => setEmailFeedback({ type: 'error', msg: e.message }))
       .finally(() => setLoadingSettings(false));
   }, []);
@@ -23,7 +30,7 @@ export const SettingsScreen = () => {
     setSaving(true);
     setEmailFeedback(null);
     try {
-      await updateSettings({ EMAIL_FROM: emailFrom });
+      await updateSettings({ EMAIL_FROM: emailFrom, SMTP_USER: smtpUser, SMTP_PASS: smtpPass });
       setEmailFeedback({ type: 'ok', msg: 'Configuración guardada correctamente.' });
     } catch (err: any) {
       setEmailFeedback({ type: 'error', msg: err.message });
@@ -114,17 +121,55 @@ export const SettingsScreen = () => {
               <h2 className="font-semibold text-ink dark:text-white text-base">Configuración de Email</h2>
             </div>
             <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Cuenta Gmail (usuario SMTP)</label>
+              <input
+                type="email"
+                value={smtpUser}
+                onChange={e => setSmtpUser(e.target.value)}
+                placeholder="Ej: tesoreria@empresa.com.ar"
+                className="w-full px-4 py-3 rounded-lg border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 text-ink dark:text-white focus:ring-2 focus:ring-primary focus:outline-none transition-all text-sm font-medium"
+              />
+              <p className="text-xs text-ink-muted dark:text-slate-500">
+                La cuenta de Gmail desde la que se envían los comprobantes. Si se deja vacío se usa el valor del servidor.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Contraseña de aplicación SMTP</label>
+              <div className="relative">
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  value={smtpPass}
+                  onChange={e => setSmtpPass(e.target.value)}
+                  placeholder="Contraseña de aplicación de Google"
+                  className="w-full px-4 py-3 pr-12 rounded-lg border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 text-ink dark:text-white focus:ring-2 focus:ring-primary focus:outline-none transition-all text-sm font-medium"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted hover:text-ink transition-colors"
+                  title={showPass ? 'Ocultar' : 'Mostrar'}
+                >
+                  <span className="material-symbols-outlined text-[20px]">{showPass ? 'visibility_off' : 'visibility'}</span>
+                </button>
+              </div>
+              <p className="text-xs text-ink-muted dark:text-slate-500">
+                Usá una <strong>contraseña de aplicación</strong> de Google (no tu contraseña de Gmail).
+                Generala en: Cuenta de Google → Seguridad → Verificación en dos pasos → Contraseñas de aplicaciones.
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 dark:text-slate-300">Dirección remitente (From)</label>
               <input
                 type="email"
                 value={emailFrom}
                 onChange={e => setEmailFrom(e.target.value)}
-                placeholder="Ej: pagos@empresa.com.ar"
+                placeholder="Ej: pagos@empresa.com.ar (puede diferir del usuario SMTP)"
                 className="w-full px-4 py-3 rounded-lg border border-border-light dark:border-border-dark bg-white dark:bg-slate-800 text-ink dark:text-white focus:ring-2 focus:ring-primary focus:outline-none transition-all text-sm font-medium"
               />
               <p className="text-xs text-ink-muted dark:text-slate-500">
-                Aparecerá como remitente en los comprobantes enviados a proveedores.
-                Si se deja vacío se usa el valor definido en el servidor (SMTP_FROM).
+                Opcional. Si se deja vacío, el remitente visible será la misma cuenta Gmail de arriba.
               </p>
             </div>
           </div>

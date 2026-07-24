@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { PaymentOrder, Invoice, RetentionResponse, TreasuryMovement, TemValidation } from '../types';
+import { PaymentOrder, Invoice, RetentionResponse, Retention, TreasuryMovement, TemValidation } from '../types';
 import { fetchOrder, fetchOrderInvoices, fetchOrderRetentions, reviewOrder, ReviewResult } from '../services/api';
 import { getStatusStyle } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
@@ -83,13 +83,22 @@ export const OrderDetailScreen = () => {
 
     const statusStyle = getStatusStyle(order.status as any);
     const fmt = (n: number | undefined) => `$ ${(n ?? 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`;
+    const formatRate = (ret: Retention) => {
+        if (ret.baseAmount && ret.amount) {
+            const rate = (ret.amount / ret.baseAmount) * 100;
+            const str = (Math.round(rate * 1000) / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+            return `${str.replace('.', ',')}%`;
+        }
+        if (ret.appliedRate) return `${String(ret.appliedRate).replace('.', ',')}%`;
+        return '';
+    };
 
     return (
         <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-12">
 
             {/* Back link */}
             <button
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate(-1)}
                 className="text-sm text-ink-soft hover:text-primary flex items-center gap-1 transition-colors"
             >
                 ← Volver al panel
@@ -255,7 +264,7 @@ export const OrderDetailScreen = () => {
                                     <th className="py-3 px-6">Cód.</th>
                                     <th className="py-3 px-6">Descripción</th>
                                     <th className="py-3 px-6">Certificado</th>
-                                    <th className="py-3 px-6 text-right">Base de cálculo</th>
+                                    <th className="py-3 px-6 text-right">Importe pagado sujeto a retención / Base de cálculo</th>
                                     <th className="py-3 px-6 text-right">Importe retenido</th>
                                 </tr>
                             </thead>
@@ -314,7 +323,7 @@ export const OrderDetailScreen = () => {
                             </div>
                             {(retentionData?.retentions || []).map((ret, idx) => (
                                 <div key={idx} className="flex justify-between text-ink-soft">
-                                    <span>{ret.name}{ret.appliedRate ? ` (${ret.appliedRate}%)` : ''}</span>
+                                    <span>{ret.name}{formatRate(ret) ? ` (${formatRate(ret)})` : ''}</span>
                                     <span className="font-mono">— {fmt(ret.amount)}</span>
                                 </div>
                             ))}

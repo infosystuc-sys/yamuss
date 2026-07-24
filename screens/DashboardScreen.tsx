@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getStatusStyle } from '../constants';
 import { PaymentOrder } from '../types';
 import { fetchOrders, fetchOrderComprobante, bulkUpdateStatus } from '../services/api';
@@ -15,7 +15,15 @@ export const DashboardScreen = () => {
   const [orders, setOrders] = useState<PaymentOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusFilter = searchParams.get('status') || 'ALL';
+  const setStatusFilter = (value: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (value === 'ALL') next.delete('status'); else next.set('status', value);
+      return next;
+    }, { replace: true });
+  };
   const [loadingPdf, setLoadingPdf] = useState<string | null>(null);
 
   // Selección múltiple
@@ -59,8 +67,21 @@ export const DashboardScreen = () => {
     loadOrders();
   }, [statusFilter]);
 
-  const [showFilters, setShowFilters] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [showFilters, setShowFilters] = useState(() => !!searchParams.get('q'));
+  const searchTerm = searchParams.get('q') || '';
+  const setSearchTerm = (value: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('q', value); else next.delete('q');
+      return next;
+    }, { replace: true });
+  };
+
+  const fmtDate = (d: string) => {
+    if (!d) return '-';
+    const [y, m, day] = d.split('-');
+    return (y && m && day) ? `${day}/${m}/${y}` : d;
+  };
 
   const filteredOrders = orders.filter(op =>
     op.provider.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -264,6 +285,7 @@ export const DashboardScreen = () => {
                   )}
                   <th className="py-4 px-6">N° OP</th>
                   <th className="py-4 px-6">Proveedor</th>
+                  <th className="py-4 px-6">CUIT</th>
                   <th className="py-4 px-6">Fecha</th>
                   <th className="py-4 px-6 text-right">Monto Neto</th>
                   <th className="py-4 px-6">Estado</th>
@@ -291,7 +313,7 @@ export const DashboardScreen = () => {
                       )}
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono font-semibold text-ink-soft dark:text-slate-400">{op.number}</span>
+                          <span className="text-sm font-code font-semibold text-ink-soft dark:text-slate-400">{op.number}</span>
                           {op.emailEnviado && (
                             <span title="Comprobante enviado por email" className="text-emerald-500">
                               <span className="material-symbols-outlined text-[16px]">mark_email_read</span>
@@ -301,10 +323,13 @@ export const DashboardScreen = () => {
                       </td>
                       <td className="py-4 px-6">
                         <p className="text-sm font-semibold text-ink dark:text-white line-clamp-1">{op.provider}</p>
-                        {op.cbu && <p className="text-[11px] text-ink-muted font-mono">CBU: {op.cbu}</p>}
+                        {op.cbu && <p className="text-[11px] text-ink-muted font-code">CBU: {op.cbu}</p>}
                         {op.email && <p className="text-[11px] text-ink-muted">✉ {op.email}</p>}
                       </td>
-                      <td className="py-4 px-6 text-xs text-ink-soft">{op.date}</td>
+                      <td className="py-4 px-6 whitespace-nowrap">
+                        <span className="text-base font-code font-bold text-ink dark:text-white">{op.cuit || '—'}</span>
+                      </td>
+                      <td className="py-4 px-6 text-xs text-ink-soft">{fmtDate(op.date)}</td>
                       <td className="py-4 px-6 text-right text-sm font-semibold font-mono text-ink dark:text-white">
                         $ {op.netAmount.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                       </td>

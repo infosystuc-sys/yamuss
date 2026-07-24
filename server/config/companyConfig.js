@@ -68,3 +68,44 @@ export function getCompanyData(database) {
         phone: '[COMPLETAR]',
     };
 }
+
+/**
+ * Igual que getCompanyData, pero lee razón social, CUIT, domicilio (EMPRESA)
+ * e ingresos brutos (CPA10) desde la base Tango de la empresa activa.
+ * Cualquier dato no disponible en la base (tabla ausente, fila vacía, etc.)
+ * cae al valor estático de COMPANY_DATA para no romper el PDF.
+ */
+export async function getCompanyDataFromDb(db, database) {
+    const company = { ...getCompanyData(database) };
+
+    try {
+        const result = await db.query(
+            `SELECT TOP 1 NOMBRE_LEGAL, CUIT, CALLE_LEGAL, NRO_DOMIC_LEGAL, LOCALIDAD_LEGAL FROM EMPRESA`
+        );
+        const row = result.recordset?.[0];
+        if (row) {
+            if (row.NOMBRE_LEGAL) company.name = String(row.NOMBRE_LEGAL).trim();
+            if (row.CUIT) company.cuit = String(row.CUIT).trim();
+
+            const calle = String(row.CALLE_LEGAL ?? '').trim();
+            const nro = String(row.NRO_DOMIC_LEGAL ?? '').trim();
+            const localidad = String(row.LOCALIDAD_LEGAL ?? '').trim();
+            const calleConNro = `${calle} ${nro}`.trim();
+            if (calleConNro || localidad) {
+                company.address = [calleConNro, localidad, 'TUCUMAN - CP 4000'].filter(Boolean).join(' - ');
+            }
+        }
+    } catch (e) {
+        console.warn(`⚠️  No se pudo leer EMPRESA en ${database}, se usan datos estáticos: ${e.message}`);
+    }
+
+    try {
+        const result = await db.query(`SELECT TOP 1 N_ING_BRUT FROM CPA10`);
+        const row = result.recordset?.[0];
+        if (row?.N_ING_BRUT) company.iibb = String(row.N_ING_BRUT).trim();
+    } catch (e) {
+        console.warn(`⚠️  No se pudo leer CPA10 en ${database}, se usa IIBB estático: ${e.message}`);
+    }
+
+    return company;
+}

@@ -16,7 +16,7 @@ import nodemailer from 'nodemailer';
  * @param {Buffer}   params.pdfBuffer      — PDF generado en memoria
  * @returns {Promise<{sent: boolean, recipient: string|null, reason?: string}>}
  */
-export async function sendComprobante({ providerEmail, providerName, opNumber, pdfBuffer, from }) {
+export async function sendComprobante({ providerEmail, providerName, opNumber, pdfBuffer, from, smtpUser, smtpPass }) {
 
     // Determinar destinatario (regla de seguridad para pruebas)
     const testRecipient = process.env.TEST_EMAIL_RECIPIENT?.trim();
@@ -36,8 +36,8 @@ export async function sendComprobante({ providerEmail, providerName, opNumber, p
         port: 587,
         secure: false, // STARTTLS
         auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS,
+            user: smtpUser || process.env.SMTP_USER,
+            pass: smtpPass || process.env.SMTP_PASS,
         },
     });
 

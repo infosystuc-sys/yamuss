@@ -28,6 +28,14 @@ export const ProcessingScreen = () => {
     }
   };
 
+  const selectedWithoutCbu = orders.filter(o => selectedIds.has(o.id) && !o.cbu);
+
+  const fmtDate = (d: string) => {
+    if (!d) return '-';
+    const [y, m, day] = d.split('-');
+    return (y && m && day) ? `${day}/${m}/${y}` : d;
+  };
+
   const toggleSelect = (id: string) => {
     const newSet = new Set(selectedIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -117,13 +125,31 @@ export const ProcessingScreen = () => {
           </div>
           <button
             onClick={handleProcessBatch}
-            disabled={selectedIds.size === 0 || processing}
-            className={`px-6 py-2 rounded-lg font-bold text-sm shadow-sm flex items-center gap-2 transition-all ${selectedIds.size === 0 || processing ? 'bg-slate-200 text-slate-400' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+            disabled={selectedIds.size === 0 || processing || selectedWithoutCbu.length > 0}
+            title={selectedWithoutCbu.length > 0 ? `Sin CBU: ${selectedWithoutCbu.map(o => o.number).join(', ')}` : undefined}
+            className={`px-6 py-2 rounded-lg font-bold text-sm shadow-sm flex items-center gap-2 transition-all ${
+              selectedIds.size === 0 || processing || selectedWithoutCbu.length > 0
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+            }`}
           >
             {processing ? <span className="animate-spin material-symbols-outlined">sync</span> : <span className="material-symbols-outlined">payments</span>}
             {processing ? 'Procesando...' : 'Generar TXT y Pagar'}
           </button>
         </div>
+
+        {selectedWithoutCbu.length > 0 && (
+          <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span className="material-symbols-outlined text-amber-500 mt-0.5 text-base">warning</span>
+            <div>
+              <span className="font-bold">Sin CBU — no se puede transferir:</span>{' '}
+              {selectedWithoutCbu.map(o => (
+                <span key={o.id} className="font-mono font-semibold">{o.number} ({o.provider})</span>
+              )).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], [])}
+              . Completá el CBU del proveedor en Tango antes de procesar.
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -164,8 +190,16 @@ export const ProcessingScreen = () => {
                     <td className="p-4 font-mono text-slate-500 text-xs">{op.providerCode || '—'}</td>
                     <td className="p-4 font-medium text-slate-800">{op.provider}</td>
                     <td className="p-4 font-mono text-slate-500 text-xs">{op.cuit || '—'}</td>
-                    <td className="p-4 font-mono text-slate-500 text-xs">{op.cbu || '—'}</td>
-                    <td className="p-4 text-slate-500 text-xs">{op.date}</td>
+                    <td className="p-4 font-mono text-xs">
+                      {op.cbu
+                        ? <span className="text-slate-500">{op.cbu}</span>
+                        : <span className="flex items-center gap-1 text-amber-600 font-semibold">
+                            <span className="material-symbols-outlined text-[14px]">warning</span>
+                            Sin CBU
+                          </span>
+                      }
+                    </td>
+                    <td className="p-4 text-slate-500 text-xs">{fmtDate(op.date)}</td>
                     <td className="p-4 text-right font-bold text-slate-900">$ {op.netAmount.toLocaleString('es-AR')}</td>
                   </tr>
                 ))
