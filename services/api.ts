@@ -20,6 +20,15 @@ export function getAuthHeaders(omitContentType = false): Record<string, string> 
     return headers;
 }
 
+export async function fetchServerTime(): Promise<Date> {
+    const response = await fetch(`${API_URL}/health`);
+    if (!response.ok) {
+        throw new Error(`Error fetching server time: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return new Date(data.timestamp);
+}
+
 export async function fetchOrders(status?: string): Promise<PaymentOrder[]> {
     try {
         let url = `${API_URL}/orders`;

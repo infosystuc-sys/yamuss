@@ -44,19 +44,27 @@ async function getMasterDb() {
 }
 
 // Lookup rápido de estados desde la BD maestra dado un array de N_COMP
+// Se consulta en lotes: SQL Server admite un máximo de 2100 parámetros por consulta.
+const FETCH_ESTADOS_BATCH_SIZE = 1900;
+
 async function fetchEstados(nComps) {
     if (!nComps || nComps.length === 0) return {};
     const masterDb = await getMasterDb();
-    const placeholders = nComps.map((_, i) => `@comp${i}`).join(',');
-    const req = masterDb.request();
-    nComps.forEach((n, i) => req.input(`comp${i}`, 'VarChar', n));
-    const result = await req.query(
-        `SELECT N_COMP, ESTADO, ISNULL(EMAIL_ENVIADO, 0) as EMAIL_ENVIADO FROM APP_OP_ESTADOS WITH (NOLOCK) WHERE N_COMP IN (${placeholders})`
-    );
     const map = {};
-    for (const row of result.recordset) {
-        map[row.N_COMP] = { estado: row.ESTADO, emailEnviado: !!row.EMAIL_ENVIADO };
+
+    for (let i = 0; i < nComps.length; i += FETCH_ESTADOS_BATCH_SIZE) {
+        const chunk = nComps.slice(i, i + FETCH_ESTADOS_BATCH_SIZE);
+        const placeholders = chunk.map((_, j) => `@comp${j}`).join(',');
+        const req = masterDb.request();
+        chunk.forEach((n, j) => req.input(`comp${j}`, 'VarChar', n));
+        const result = await req.query(
+            `SELECT N_COMP, ESTADO, ISNULL(EMAIL_ENVIADO, 0) as EMAIL_ENVIADO FROM APP_OP_ESTADOS WITH (NOLOCK) WHERE N_COMP IN (${placeholders})`
+        );
+        for (const row of result.recordset) {
+            map[row.N_COMP] = { estado: row.ESTADO, emailEnviado: !!row.EMAIL_ENVIADO };
+        }
     }
+
     return map;
 }
 
@@ -536,7 +544,7 @@ app.get('/api/orders', async (req, res) => {
 
         // 1. Traer órdenes de CPA04+CPA01 sin cross-DB join (rápido)
         const query = `
-            SELECT TOP 50
+            SELECT TOP 300
                 op.N_COMP as number,
                 op.COD_PROVEE as providerId,
                 prov.COD_PROVEE as providerCode,

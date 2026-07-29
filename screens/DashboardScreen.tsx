@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getStatusStyle } from '../constants';
 import { PaymentOrder } from '../types';
-import { fetchOrders, fetchOrderComprobante, bulkUpdateStatus } from '../services/api';
+import { fetchOrders, fetchOrderComprobante, bulkUpdateStatus, fetchServerTime } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 
@@ -67,6 +67,11 @@ export const DashboardScreen = () => {
     loadOrders();
   }, [statusFilter]);
 
+  const [serverDate, setServerDate] = useState<Date>(() => new Date());
+  useEffect(() => {
+    fetchServerTime().then(setServerDate).catch(() => {});
+  }, []);
+
   const [showFilters, setShowFilters] = useState(() => !!searchParams.get('q'));
   const searchTerm = searchParams.get('q') || '';
   const setSearchTerm = (value: string) => {
@@ -123,13 +128,13 @@ export const DashboardScreen = () => {
   };
 
   const stats = {
-    pending: orders.filter(o => o.status === 'Pendiente' || (o.status as string)?.toUpperCase?.() === 'PENDIENTE').length,
-    revised: orders.filter(o => (o.status as string)?.toUpperCase?.() === 'REVISADA').length,
-    transferred: orders.filter(o => (o.status as string)?.toUpperCase?.() === 'TRANSFERIDA').length,
-    totalAmount: orders.reduce((sum, o) => sum + o.netAmount, 0)
+    pending: filteredOrders.filter(o => o.status === 'Pendiente' || (o.status as string)?.toUpperCase?.() === 'PENDIENTE').length,
+    revised: filteredOrders.filter(o => (o.status as string)?.toUpperCase?.() === 'REVISADA').length,
+    transferred: filteredOrders.filter(o => (o.status as string)?.toUpperCase?.() === 'TRANSFERIDA').length,
+    totalAmount: filteredOrders.reduce((sum, o) => sum + o.netAmount, 0)
   };
 
-  const today = new Date().toLocaleDateString('es-AR', {
+  const today = serverDate.toLocaleDateString('es-AR', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });
 

@@ -42,7 +42,8 @@ export function getDbConfig(database) {
             trustServerCertificate: true,
             enableArithAbort: true,
             instanceName: instanceName,
-            requestTimeout: 60000
+            requestTimeout: 60000,
+            useUTC: false
         },
         connectTimeout: 30000,
         requestTimeout: 60000,
